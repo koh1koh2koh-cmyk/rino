@@ -14,11 +14,10 @@ pub enum TokenKind {
     H1, P, Button, Image, Link, Input, List, ListItem,
 
     // دوال مدمجة
-    Print,      // اطبع
+    Print,
 
     // أحداث
-    OnClick,    // عند_الضغط
-    OnChange,   // عند_التغيير
+    OnClick, OnChange,
 
     // رموز
     LParen, RParen,

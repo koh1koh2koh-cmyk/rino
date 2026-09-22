@@ -1,4 +1,4 @@
-//! أدوات التصحيح التلقائي للأخطاء الإملائية.
+//! أدوات التصحيح التلقائي.
 
 pub fn levenshtein(a: &str, b: &str) -> usize {
     let a: Vec<char> = a.chars().collect();

@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! المرحلة 2: HTML + CSS + أحداث
+//! الإصدار 0.3 — شروط ديناميكية
 
 mod ast;
 mod correction;
@@ -7,12 +7,73 @@ mod lexer;
 mod parser;
 mod token;
 
-use ast::{BinOp, Expression, Program, Statement};
+mod formatter {
+    pub struct Formatter {
+        indent: usize,
+        indent_size: usize,
+    }
+    impl Formatter {
+        pub fn new() -> Self {
+            Self { indent: 0, indent_size: 2 }
+        }
+        pub fn format(&mut self, source: &str) -> String {
+            let mut output = String::new();
+            let mut in_string = false;
+            let mut current_line = String::new();
+            let mut last_char: Option<char> = None;
+            for ch in source.chars() {
+                if ch == '"' && last_char != Some('\\') { in_string = !in_string; }
+                if in_string {
+                    current_line.push(ch);
+                    last_char = Some(ch);
+                    continue;
+                }
+                match ch {
+                    '{' => {
+                        current_line.push('{');
+                        self.flush_line(&mut output, &mut current_line);
+                        self.indent += 1;
+                    }
+                    '}' => {
+                        if !current_line.trim().is_empty() {
+                            self.flush_line(&mut output, &mut current_line);
+                        }
+                        self.indent = self.indent.saturating_sub(1);
+                        current_line.push('}');
+                    }
+                    '\n' => {
+                        if !current_line.trim().is_empty() {
+                            self.flush_line(&mut output, &mut current_line);
+                        }
+                    }
+                    _ => { current_line.push(ch); }
+                }
+                last_char = Some(ch);
+            }
+            if !current_line.trim().is_empty() {
+                self.flush_line(&mut output, &mut current_line);
+            }
+            if !output.ends_with('\n') { output.push('\n'); }
+            output
+        }
+        fn flush_line(&mut self, output: &mut String, line: &mut String) {
+            let trimmed = line.trim();
+            if trimmed.is_empty() { line.clear(); return; }
+            for _ in 0..self.indent {
+                for _ in 0..self.indent_size { output.push(' '); }
+            }
+            output.push_str(trimmed);
+            output.push('\n');
+            line.clear();
+        }
+    }
+}
+
+use ast::*;
 use lexer::Lexer;
 use parser::Parser;
 use std::collections::HashMap;
 use std::fs;
-use std::path::Path;
 
 #[derive(Debug, Clone)]
 enum Value {
@@ -20,26 +81,45 @@ enum Value {
     Num(f64),
     Bool(bool),
     Null,
+    List(Vec<Value>),
 }
 
 impl Value {
     fn to_display(&self) -> String {
         match self {
             Value::Str(s) => s.clone(),
-            Value::Num(n) => {
-                if n.fract() == 0.0 { format!("{}", *n as i64) }
-                else { format!("{}", n) }
-            }
+            Value::Num(n) => if n.fract() == 0.0 { format!("{}", *n as i64) } else { format!("{}", n) },
             Value::Bool(b) => if *b { "صحيح" } else { "خطأ" }.to_string(),
             Value::Null => String::new(),
+            Value::List(items) => items.iter().map(|v| v.to_display()).collect::<Vec<_>>().join("، "),
         }
     }
-    fn as_number(&self) -> Result<f64, String> {
+    fn as_num(&self) -> Result<f64, String> {
         match self {
             Value::Num(n) => Ok(*n),
-            Value::Str(s) => s.parse::<f64>()
-                .map_err(|_| format!("لا يمكن تحويل \"{}\" إلى عدد", s)),
-            _ => Err("قيمة غير رقمية".to_string()),
+            Value::Str(s) => s.parse().map_err(|_| format!("\"{}\" ليس عددًا", s)),
+            _ => Err("قيمة غير رقمية".into()),
+        }
+    }
+    fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(b) => *b,
+            Value::Num(n) => *n != 0.0,
+            Value::Str(s) => !s.is_empty(),
+            Value::Null => false,
+            Value::List(v) => !v.is_empty(),
+        }
+    }
+    fn to_js_literal(&self) -> String {
+        match self {
+            Value::Str(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            Value::Num(n) => if n.fract() == 0.0 { format!("{}", *n as i64) } else { format!("{}", n) },
+            Value::Bool(b) => if *b { "true".into() } else { "false".into() },
+            Value::Null => "null".into(),
+            Value::List(items) => {
+                let i: Vec<String> = items.iter().map(|x| x.to_js_literal()).collect();
+                format!("[{}]", i.join(", "))
+            }
         }
     }
 }
@@ -51,7 +131,84 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
         Expression::Boolean(b) => Ok(Value::Bool(*b)),
         Expression::Null => Ok(Value::Null),
         Expression::Identifier(name) => env.get(name).cloned()
-            .ok_or_else(|| format!("المتغير \"{}\" غير معرف", name)),
+            .ok_or_else(|| format!("المتغير \"{}\" غير معرّف", name)),
+        Expression::List(items) => {
+            let mut vs = Vec::new();
+            for i in items { vs.push(eval(i, env)?); }
+            Ok(Value::List(vs))
+        }
+        Expression::Call { name, args } => {
+            let mut vs = Vec::new();
+            for a in args { vs.push(eval(a, env)?); }
+            match name.as_str() {
+                "طول" => match vs.first() {
+                    Some(Value::List(l)) => Ok(Value::Num(l.len() as f64)),
+                    Some(Value::Str(s)) => Ok(Value::Num(s.chars().count() as f64)),
+                    _ => Err("طول تحتاج قائمة أو نصًا".into()),
+                },
+                "كبير" => match vs.first() {
+                    Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())),
+                    _ => Err("كبير تحتاج نصًا".into()),
+                },
+                "صغير" => match vs.first() {
+                    Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())),
+                    _ => Err("صغير تحتاج نصًا".into()),
+                },
+                "يحتوي" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::Str(s)), Some(Value::Str(sub))) => Ok(Value::Bool(s.contains(sub.as_str()))),
+                    _ => Err("يحتوي تحتاج نصين".into()),
+                },
+                "استبدل" => match (vs.get(0), vs.get(1), vs.get(2)) {
+                    (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => {
+                        Ok(Value::Str(s.replace(a.as_str(), b.as_str())))
+                    }
+                    _ => Err("استبدل تحتاج 3 نصوص".into()),
+                },
+                "جذر" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?.sqrt())),
+                    _ => Err("جذر تحتاج عددًا".into()),
+                },
+                "قوة" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))),
+                    _ => Err("قوة تحتاج عددين".into()),
+                },
+                "قوس" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?.round())),
+                    _ => Err("قوس تحتاج عددًا".into()),
+                },
+                "أرضي" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?.floor())),
+                    _ => Err("أرضي تحتاج عددًا".into()),
+                },
+                "سقف" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?.ceil())),
+                    _ => Err("سقف تحتاج عددًا".into()),
+                },
+                "مطلق" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?.abs())),
+                    _ => Err("مطلق تحتاج عددًا".into()),
+                },
+                "أصغر" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => {
+                        let (x, y) = (a.as_num()?, b.as_num()?);
+                        Ok(Value::Num(if x < y { x } else { y }))
+                    }
+                    _ => Err("أصغر تحتاج عددين".into()),
+                },
+                "أكبر" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => {
+                        let (x, y) = (a.as_num()?, b.as_num()?);
+                        Ok(Value::Num(if x > y { x } else { y }))
+                    }
+                    _ => Err("أكبر تحتاج عددين".into()),
+                },
+                "عدد" => match vs.first() {
+                    Some(v) => Ok(Value::Num(v.as_num()?)),
+                    _ => Err("عدد تحتاج قيمة".into()),
+                },
+                _ => Err(format!("دالة غير معروفة: {}", name)),
+            }
+        }
         Expression::Binary { left, op, right } => {
             let l = eval(left, env)?;
             let r = eval(right, env)?;
@@ -60,17 +217,43 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     (Value::Num(a), Value::Num(b)) => Ok(Value::Num(a + b)),
                     _ => Ok(Value::Str(l.to_display() + &r.to_display())),
                 },
-                BinOp::Sub => Ok(Value::Num(l.as_number()? - r.as_number()?)),
-                BinOp::Mul => Ok(Value::Num(l.as_number()? * r.as_number()?)),
+                BinOp::Sub => Ok(Value::Num(l.as_num()? - r.as_num()?)),
+                BinOp::Mul => Ok(Value::Num(l.as_num()? * r.as_num()?)),
                 BinOp::Div => {
-                    let b = r.as_number()?;
-                    if b == 0.0 { Err("القسمة على صفر".to_string()) }
-                    else { Ok(Value::Num(l.as_number()? / b)) }
+                    let b = r.as_num()?;
+                    if b == 0.0 { Err("القسمة على صفر".into()) }
+                    else { Ok(Value::Num(l.as_num()? / b)) }
                 }
+                BinOp::Mod => Ok(Value::Num(l.as_num()? % r.as_num()?)),
             }
         }
+        Expression::Comparison { left, op, right } => {
+            let l = eval(left, env)?;
+            let r = eval(right, env)?;
+            let res = match op {
+                CmpOp::Eq => l.to_display() == r.to_display(),
+                CmpOp::Ne => l.to_display() != r.to_display(),
+                CmpOp::Gt => l.as_num()? > r.as_num()?,
+                CmpOp::Lt => l.as_num()? < r.as_num()?,
+                CmpOp::Ge => l.as_num()? >= r.as_num()?,
+                CmpOp::Le => l.as_num()? <= r.as_num()?,
+            };
+            Ok(Value::Bool(res))
+        }
+        Expression::Logical { left, op, right } => {
+            let l = eval(left, env)?;
+            match op {
+                LogOp::And => if !l.as_bool() { Ok(Value::Bool(false)) }
+                    else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
+                LogOp::Or => if l.as_bool() { Ok(Value::Bool(true)) }
+                    else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
+            }
+        }
+        Expression::Not(e) => Ok(Value::Bool(!eval(e, env)?.as_bool())),
     }
 }
+
+// ========== CSS ==========
 
 fn css_property(name: &str) -> &str {
     match name {
@@ -84,106 +267,417 @@ fn css_property(name: &str) -> &str {
         "عرض" => "width",
         "ارتفاع" => "height",
         "حد" => "border",
+        "وزن" => "font-weight",
+        "ظل" => "box-shadow",
+        "اتجاه" => "direction",
+        "تحويل" => "text-transform",
+        "مسافة_بين_الأسطر" => "line-height",
         _ => name,
     }
 }
 
 fn css_value(val: &str) -> String {
     match val {
-        "أحمر" => "red".to_string(),
-        "أزرق" => "blue".to_string(),
-        "أخضر" => "green".to_string(),
-        "أبيض" => "white".to_string(),
-        "أسود" => "black".to_string(),
-        "رمادي" => "gray".to_string(),
-        "أصفر" => "yellow".to_string(),
-        "وسط" => "center".to_string(),
-        "يمين" => "right".to_string(),
-        "يسار" => "left".to_string(),
-        _ => {
-            if val.parse::<f64>().is_ok() {
-                format!("{}px", val)
-            } else {
-                val.to_string()
+        "أحمر" => "red".into(),
+        "أزرق" => "blue".into(),
+        "أخضر" => "green".into(),
+        "أبيض" => "white".into(),
+        "أسود" => "black".into(),
+        "رمادي" => "gray".into(),
+        "أصفر" => "yellow".into(),
+        "برتقالي" => "orange".into(),
+        "بنفسجي" => "purple".into(),
+        "وردي" => "pink".into(),
+        "بني" => "brown".into(),
+        "ذهبي" => "gold".into(),
+        "فضي" => "silver".into(),
+        "سماوي" => "skyblue".into(),
+        "ليموني" => "lime".into(),
+        "أرجواني" => "magenta".into(),
+        "نيلي" => "navy".into(),
+        "كريمي" => "beige".into(),
+        "شفاف" => "transparent".into(),
+        "تركوازي" => "turquoise".into(),
+        "مرجاني" => "coral".into(),
+        "وسط" => "center".into(),
+        "يمين" => "right".into(),
+        "يسار" => "left".into(),
+        "عريض" => "bold".into(),
+        "ضعيف" => "lighter".into(),
+        "مائل" => "italic".into(),
+        _ => if val.parse::<f64>().is_ok() { format!("{}px", val) } else { val.to_string() },
+    }
+}
+
+// ========== توليد الكود ==========
+
+struct Codegen {
+    counter: usize,
+    events_js: String,
+    updates_js: String,
+}
+
+impl Codegen {
+    fn new() -> Self {
+        Self { counter: 0, events_js: String::new(), updates_js: String::new() }
+    }
+
+    fn next_id(&mut self) -> String {
+        self.counter += 1;
+        format!("r{}", self.counter)
+    }
+
+    fn is_reactive(&self, expr: &Expression, state_vars: &[String]) -> bool {
+        match expr {
+            Expression::Identifier(n) => state_vars.contains(n),
+            Expression::Binary { left, right, .. }
+            | Expression::Comparison { left, right, .. }
+            | Expression::Logical { left, right, .. } => {
+                self.is_reactive(left, state_vars) || self.is_reactive(right, state_vars)
             }
+            Expression::Not(e) => self.is_reactive(e, state_vars),
+            Expression::List(items) => items.iter().any(|i| self.is_reactive(i, state_vars)),
+            Expression::Call { args, .. } => args.iter().any(|a| self.is_reactive(a, state_vars)),
+            _ => false,
+        }
+    }
+
+    fn expr_to_js(&self, expr: &Expression) -> String {
+        match expr {
+            Expression::String(s) => format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")),
+            Expression::Number(n) => if n.fract() == 0.0 { format!("{}", *n as i64) } else { format!("{}", n) },
+            Expression::Boolean(b) => if *b { "true".into() } else { "false".into() },
+            Expression::Null => "null".into(),
+            Expression::Identifier(n) => format!("حالة.{}", n),
+            Expression::List(items) => {
+                let list: Vec<String> = items.iter().map(|i| self.expr_to_js(i)).collect();
+                format!("[{}]", list.join(", "))
+            }
+            Expression::Call { name, args } => {
+                if name == "اقرأ_مدخل" && args.is_empty() {
+                    return "this.value".to_string();
+                }
+                let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
+                format!("{}({})", name, a.join(", "))
+            }
+            Expression::Binary { left, op, right } => {
+                let op_str = match op {
+                    BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
+                    BinOp::Div => "/", BinOp::Mod => "%",
+                };
+                format!("({} {} {})", self.expr_to_js(left), op_str, self.expr_to_js(right))
+            }
+            Expression::Comparison { left, op, right } => {
+                let op_str = match op {
+                    CmpOp::Eq => "===", CmpOp::Ne => "!==",
+                    CmpOp::Gt => ">", CmpOp::Lt => "<",
+                    CmpOp::Ge => ">=", CmpOp::Le => "<=",
+                };
+                format!("({} {} {})", self.expr_to_js(left), op_str, self.expr_to_js(right))
+            }
+            Expression::Logical { left, op, right } => {
+                let op_str = match op { LogOp::And => "&&", LogOp::Or => "||" };
+                format!("({} {} {})", self.expr_to_js(left), op_str, self.expr_to_js(right))
+            }
+            Expression::Not(e) => format!("(!{})", self.expr_to_js(e)),
+        }
+    }
+
+    fn stmt_to_js(&mut self, stmt: &Statement, indent: &str) -> Result<String, String> {
+        match stmt {
+            Statement::Let { name, value, .. } => Ok(format!("{}let {} = {};\n", indent, name, self.expr_to_js(value))),
+            Statement::Const { name, value, .. } => Ok(format!("{}const {} = {};\n", indent, name, self.expr_to_js(value))),
+            Statement::Assignment { name, value, .. } => Ok(format!("{}حالة.{} = {};\n", indent, name, self.expr_to_js(value))),
+            Statement::Return { value, .. } => match value {
+                Some(v) => Ok(format!("{}return {};\n", indent, self.expr_to_js(v))),
+                None => Ok(format!("{}return;\n", indent)),
+            },
+            Statement::If { condition, then_branch, else_branch, .. } => {
+                let mut s = format!("{}if ({}) {{\n", indent, self.expr_to_js(condition));
+                for st in then_branch { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                s.push_str(&format!("{}}}", indent));
+                if !else_branch.is_empty() {
+                    s.push_str(" else {\n");
+                    for st in else_branch { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                    s.push_str(&format!("{}}}", indent));
+                }
+                s.push('\n');
+                Ok(s)
+            }
+            Statement::Call { name, args, .. } => {
+                if name == "_skip_" { return Ok(String::new()); }
+                let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
+                if name == "اطبع" {
+                    Ok(format!("{}console.log({});\n", indent, a.join(", ")))
+                } else {
+                    Ok(format!("{}{}({});\n", indent, name, a.join(", ")))
+                }
+            }
+            Statement::ForEach { var, iterable, body, .. } => {
+                let mut s = format!("{}for (let {} of {}) {{\n", indent, var, self.expr_to_js(iterable));
+                for st in body { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                s.push_str(&format!("{}}}\n", indent));
+                Ok(s)
+            }
+            _ => Ok(String::new()),
+        }
+    }
+
+    fn gen_html(
+        &mut self,
+        stmt: &Statement,
+        env: &mut HashMap<String, Value>,
+        state_vars: &[String],
+    ) -> Result<String, String> {
+        match stmt {
+            Statement::HtmlElement { tag, content, attrs, children, events, .. } => {
+                let mut attr_str = String::new();
+                for (k, v) in attrs {
+                    let val = eval(v, env)?.to_display();
+                    attr_str.push_str(&format!(" {}=\"{}\"", k, val));
+                }
+
+                let needs_reactive = content.as_ref()
+                    .map(|c| self.is_reactive(c, state_vars))
+                    .unwrap_or(false);
+                let needs_id = needs_reactive || !events.is_empty();
+                let id = if needs_id { Some(self.next_id()) } else { None };
+
+                if let Some(ref i) = id {
+                    attr_str.push_str(&format!(" id=\"{}\"", i));
+                }
+
+                let (open, close, self_closing) = match tag.as_str() {
+                    "img" | "input" | "br" => (format!("<{}{}>", tag, attr_str), String::new(), true),
+                    _ => (format!("<{}{}>", tag, attr_str), format!("</{}>", tag), false),
+                };
+
+                let inner = if self_closing {
+                    String::new()
+                } else if let Some(ref ch) = children {
+                    let mut s = String::new();
+                    for c in ch { s.push_str(&self.gen_html(c, env, state_vars)?); }
+                    s
+                } else if let Some(c) = content {
+                    if needs_reactive {
+                        if let Some(ref i) = id {
+                            self.updates_js.push_str(&format!(
+                                "  document.getElementById('{}').textContent = {};\n",
+                                i, self.expr_to_js(c)
+                            ));
+                        }
+                        String::new()
+                    } else {
+                        eval(c, env)?.to_display()
+                    }
+                } else { String::new() };
+
+                for ev in events {
+                    if let Some(ref i) = id {
+                        let mut body_js = String::new();
+                        for s in &ev.body { body_js.push_str(&self.stmt_to_js(s, "  ")?); }
+                        self.events_js.push_str(&format!(
+                            "document.getElementById('{}').addEventListener('{}', function() {{\n{}}});\n",
+                            i, ev.kind, body_js
+                        ));
+                    }
+                }
+                Ok(format!("{}{}{}", open, inner, close))
+            }
+
+            // ===== الشرط في الجسم — مع دعم ديناميكي =====
+            Statement::If { condition, then_branch, else_branch, .. } => {
+                let needs_reactive = self.is_reactive(condition, state_vars);
+
+                if needs_reactive {
+                    // نولّد HTML للفرعين كسلسلة نصية
+                    let mut then_html = String::new();
+                    for st in then_branch {
+                        then_html.push_str(&self.gen_html(st, env, state_vars)?);
+                    }
+                    let mut else_html = String::new();
+                    for st in else_branch {
+                        else_html.push_str(&self.gen_html(st, env, state_vars)?);
+                    }
+
+                    // نضيف عنصرًا بمعرف فريد
+                    let id = self.next_id();
+                    let cond_js = self.expr_to_js(condition);
+
+                    // نهرب علامات ` و \ للاستخدام داخل قالب نصي
+                    let then_escaped = then_html
+                        .replace('\\', "\\\\")
+                        .replace('`', "\\`")
+                        .replace("${", "\\${");
+                    let else_escaped = else_html
+                        .replace('\\', "\\\\")
+                        .replace('`', "\\`")
+                        .replace("${", "\\${");
+
+                    // نضيف كود التحديث
+                    self.updates_js.push_str(&format!(
+                        "  {{ const _c = {}; const _e = document.getElementById('{}'); if (_e) _e.innerHTML = _c ? `{}` : `{}`; }}\n",
+                        cond_js, id, then_escaped, else_escaped
+                    ));
+
+                    Ok(format!("<div id=\"{}\"></div>", id))
+                } else {
+                    // تقييم ثابت
+                    let cond_val = eval(condition, env)?.as_bool();
+                    let branch = if cond_val { then_branch } else { else_branch };
+                    let mut s = String::new();
+                    for st in branch {
+                        s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
+                    }
+                    Ok(s)
+                }
+            }
+
+            // ===== الحلقة في الجسم =====
+            Statement::ForEach { var, iterable, body, .. } => {
+                let iterable_val = eval(iterable, env)?;
+                if let Value::List(items) = iterable_val {
+                    let mut s = String::new();
+                    let old_env = env.clone();
+                    for item in items {
+                        env.insert(var.clone(), item);
+                        for st in body {
+                            s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
+                        }
+                    }
+                    *env = old_env;
+                    Ok(s)
+                } else { Ok(String::new()) }
+            }
+
+            Statement::Call { name, .. } if name == "_skip_" => Ok(String::new()),
+            _ => Ok(String::new()),
         }
     }
 }
 
-fn generate_html(program: &Program, env: &HashMap<String, Value>) -> Result<String, String> {
-    let title = match &program.page_title {
-        Some(e) => eval(e, env)?.to_display(),
-        None => "Rino Page".to_string(),
+fn main() {
+    let args: Vec<String> = std::env::args().collect();
+
+    if args.len() > 2 && args[1] == "format" {
+        let file = &args[2];
+        let source = match fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("❌ فشل قراءة الملف: {}", e); std::process::exit(1); }
+        };
+        let mut fmt = formatter::Formatter::new();
+        let formatted = fmt.format(&source);
+        if let Err(e) = fs::write(file, &formatted) {
+            eprintln!("❌ فشل الحفظ: {}", e);
+            std::process::exit(1);
+        }
+        println!("✅ تم تنسيق: {}", file);
+        return;
+    }
+
+    let input = if args.len() > 1 { args[1].clone() } else { "index.rino".into() };
+    println!("📂 {}", input);
+    let source = match fs::read_to_string(&input) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
     };
 
-    // CSS
+    let mut lexer = Lexer::new(&source);
+    let tokens = match lexer.tokenize() {
+        Ok(t) => t,
+        Err(e) => { eprintln!("❌ خطأ لغوي: {}", e); std::process::exit(1); }
+    };
+    if !lexer.corrections.is_empty() {
+        println!("📋 تصحيحات:");
+        for c in &lexer.corrections { println!("  {}", c); }
+    }
+
+    let mut parser = Parser::new(tokens);
+    let program = match parser.parse() {
+        Ok(p) => p,
+        Err(e) => { eprintln!("❌ خطأ نحوي: {}", e); std::process::exit(1); }
+    };
+
+    let mut state_vars: Vec<String> = Vec::new();
+    let mut env: HashMap<String, Value> = HashMap::new();
+
+    for s in &program.state {
+        if let Statement::Let { name, value, .. } = s {
+            state_vars.push(name.clone());
+            env.insert(name.clone(), eval(value, &env).unwrap_or(Value::Null));
+        }
+    }
+
+    let mut funcs_js = String::new();
+    for f in &program.functions {
+        if let Statement::Function { name, params, body, .. } = f {
+            let mut cg = Codegen::new();
+            let mut inner = String::new();
+            for s in body { inner.push_str(&cg.stmt_to_js(s, "  ").unwrap_or_default()); }
+            funcs_js.push_str(&format!("function {}({}) {{\n{}}}\n", name, params.join(", "), inner));
+        }
+    }
+
+    let mut cg = Codegen::new();
+    let mut body_html = String::new();
+    for s in &program.body {
+        body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
+    }
+
     let mut css = String::new();
-    for rule in &program.styles {
-        css.push_str(&format!("{} {{\n", rule.selector));
-        for (prop, val) in &rule.properties {
-            css.push_str(&format!("  {}: {};\n", css_property(prop), css_value(val)));
+    for r in &program.styles {
+        css.push_str(&format!("{} {{\n", r.selector));
+        for (p, v) in &r.properties {
+            css.push_str(&format!("  {}: {};\n", css_property(p), css_value(v)));
         }
         css.push_str("}\n");
     }
 
-    // HTML + JS
-    let mut body = String::new();
-    let mut js = String::new();
-    let mut id_counter = 1usize;
-
-    for stmt in &program.statements {
-        match stmt {
-            Statement::HtmlElement { tag, content, events, .. } => {
-                let v = eval(content, env)?;
-                let needs_id = !events.is_empty();
-                let id = format!("rino-{}", id_counter);
-                id_counter += 1;
-
-                if needs_id {
-                    body.push_str(&format!(
-                        "  <{} id=\"{}\">{}</{}>\n",
-                        tag, id, v.to_display(), tag
-                    ));
-                } else {
-                    body.push_str(&format!(
-                        "  <{}>{}</{}>\n",
-                        tag, v.to_display(), tag
-                    ));
-                }
-
-                for event in events {
-                    let mut event_body = String::new();
-                    for s in &event.body {
-                        if let Statement::Call { name, args, .. } = s {
-                            if name == "اطبع" {
-                                if let Some(arg) = args.first() {
-                                    let av = eval(arg, env)?;
-                                    event_body.push_str(&format!(
-                                        "console.log(\"{}\");",
-                                        av.to_display()
-                                    ));
-                                }
-                            }
-                        }
-                    }
-                    js.push_str(&format!(
-                        "document.getElementById('{}').addEventListener('{}', function() {{ {} }});\n",
-                        id, event.kind, event_body
-                    ));
-                }
-            }
-            Statement::Call { name, args, .. } if name == "اطبع" => {
-                if let Some(arg) = args.first() {
-                    let v = eval(arg, env)?;
-                    js.push_str(&format!("console.log(\"{}\");\n", v.to_display()));
-                }
-            }
-            _ => {}
+    let mut state_init = String::new();
+    for s in &program.state {
+        if let Statement::Let { name, value, .. } = s {
+            let v = eval(value, &env).unwrap_or(Value::Null);
+            state_init.push_str(&format!("  {}: {},\n", name, v.to_js_literal()));
         }
     }
 
-    Ok(format!(
-        r#"<!DOCTYPE html>
+    let title = match &program.page_title {
+        Some(e) => eval(e, &env).map(|v| v.to_display()).unwrap_or_else(|_| "Rino Page".into()),
+        None => "Rino Page".into(),
+    };
+
+    let helpers = r#"
+function عدد(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function نص(v) { return String(v); }
+"#;
+
+    let script = if !state_vars.is_empty() {
+        format!(r#"{helpers}
+const حالة = new Proxy({{{}}}, {{
+  set(target, key, value) {{
+    target[key] = value;
+    updateAll();
+    return true;
+  }}
+}});
+
+{}
+
+function updateAll() {{
+{}}}
+
+updateAll();
+"#,
+            state_init,
+            events = cg.events_js,
+            updates = cg.updates_js,
+            helpers = helpers
+        )
+    } else {
+        format!("{}{}", helpers, cg.events_js)
+    };
+
+    let html = format!(r#"<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
@@ -193,65 +687,14 @@ fn generate_html(program: &Program, env: &HashMap<String, Value>) -> Result<Stri
 </head>
 <body>
 {body}  <script>
-{js}  </script>
+{funcs}{script}
+  </script>
 </body>
 </html>
 "#,
-        title = title, css = css, body = body, js = js
-    ))
-}
+        title = title, css = css, body = body_html, funcs = funcs_js, script = script
+    );
 
-fn main() {
-    let args: Vec<String> = std::env::args().collect();
-    let input_path = if args.len() > 1 { args[1].clone() } else { "index.rino".to_string() };
-
-    println!("📂 قراءة الملف: {}", input_path);
-    let source = match fs::read_to_string(&input_path) {
-        Ok(s) => s,
-        Err(e) => { eprintln!("❌ فشل قراءة الملف: {}", e); std::process::exit(1); }
-    };
-    println!("{}", "─".repeat(50));
-
-    let mut lexer = Lexer::new(&source);
-    let tokens = match lexer.tokenize() {
-        Ok(t) => t,
-        Err(e) => { eprintln!("❌ خطأ لغوي: {}", e); std::process::exit(1); }
-    };
-
-    if !lexer.corrections.is_empty() {
-        println!("📋 تقرير التصحيح:");
-        for c in &lexer.corrections { println!("  {}", c); }
-        println!();
-    }
-
-    let mut parser = Parser::new(tokens);
-    let program = match parser.parse() {
-        Ok(p) => p,
-        Err(e) => { eprintln!("❌ خطأ نحوي: {}", e); std::process::exit(1); }
-    };
-
-    let mut env: HashMap<String, Value> = HashMap::new();
-    for stmt in &program.statements {
-        if let Statement::Let { name, value, .. } = stmt {
-            match eval(value, &env) {
-                Ok(v) => { env.insert(name.clone(), v); }
-                Err(e) => { eprintln!("❌ خطأ في المتغير {}: {}", name, e); std::process::exit(1); }
-            }
-        }
-    }
-
-    let html = match generate_html(&program, &env) {
-        Ok(h) => h,
-        Err(e) => { eprintln!("❌ خطأ في توليد HTML: {}", e); std::process::exit(1); }
-    };
-
-    let output_path = "index.html";
-    if let Err(e) = fs::write(output_path, &html) {
-        eprintln!("❌ فشل كتابة {}: {}", output_path, e);
-        std::process::exit(1);
-    }
-
-    println!("✅ تم توليد الموقع بنجاح!");
-    println!("📄 الملف: {}", Path::new(output_path).canonicalize().unwrap().display());
-    println!("🌐 افتحه في المتصفح لمشاهدته.");
+    fs::write("index.html", &html).expect("فشل الكتابة");
+    println!("✅ تم التوليد: index.html");
 }

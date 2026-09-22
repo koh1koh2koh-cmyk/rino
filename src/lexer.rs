@@ -49,7 +49,7 @@ impl<'a> Lexer<'a> {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             match self.peek() {
-                Some(c) if c.is_whitespace() => {
+                Some(c) if c.is_whitespace() || is_diacritic(c) => {
                     self.advance();
                 }
                 Some('/') if self.peek_next() == Some('/') => {
@@ -66,7 +66,7 @@ impl<'a> Lexer<'a> {
     }
 
     fn read_string(&mut self) -> Result<String, String> {
-        self.advance(); // نأكل "
+        self.advance();
         let mut s = String::new();
         while let Some(c) = self.peek() {
             if c == '"' {
@@ -211,15 +211,17 @@ impl<'a> Lexer<'a> {
                     continue;
                 }
 
-                // 2) ليست كلمة مفتاحية → نحاول التصحيح
-                if let Some(fixed) = suggest_keyword(&word) {
-                    self.corrections.push(format!(
-                        "⚠ السطر {}: \"{}\" → \"{}\"",
-                        line, word, fixed
-                    ));
-                    let kind = keyword_to_token(fixed).unwrap();
-                    tokens.push(Token { kind, line, column });
-                    continue;
+                // 2) ليست كلمة مفتاحية → نحاول التصحيح (لكلمات من حرفين فأكثر)
+                if word.chars().count() >= 2 {
+                    if let Some(fixed) = suggest_keyword(&word) {
+                        self.corrections.push(format!(
+                            "⚠ السطر {}: \"{}\" → \"{}\"",
+                            line, word, fixed
+                        ));
+                        let kind = keyword_to_token(fixed).unwrap();
+                        tokens.push(Token { kind, line, column });
+                        continue;
+                    }
                 }
 
                 // 3) معرف عادي
@@ -247,12 +249,13 @@ fn is_ident_start(c: char) -> bool {
 }
 
 /// هل يمكن أن يحتوي المعرف على هذا المحرف؟
+/// (لا نسمح بالتشكيل داخل المعرفات)
 fn is_ident_char(c: char) -> bool {
-    // حروف وأرقام وشرطة سفلية
-    if c.is_alphanumeric() || c == '_' {
-        return true;
-    }
-    // التشكيل العربي (الفتحة، الضمة، الشدة، إلخ)
+    c.is_alphanumeric() || c == '_'
+}
+
+/// هل هذا المحرف تشكيل عربي؟
+fn is_diacritic(c: char) -> bool {
     let code = c as u32;
     (0x064B..=0x065F).contains(&code) || code == 0x0670
 }

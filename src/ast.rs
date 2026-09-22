@@ -1,42 +1,45 @@
 #![allow(dead_code)]
-//! شجرة الكود المجردة (AST) للغة Rino.
+//! شجرة الكود المجردة (AST).
 
 #[derive(Debug, Clone)]
 pub struct Program {
     pub page_title: Option<Expression>,
     pub styles: Vec<StyleRule>,
-    pub statements: Vec<Statement>,
+    pub state: Vec<Statement>,
+    pub functions: Vec<Statement>,
+    pub body: Vec<Statement>,
+    pub top_level: Vec<Statement>,
 }
 
 #[derive(Debug, Clone)]
 pub struct StyleRule {
-    pub selector: String,           // "h1", "p", "button"
-    pub properties: Vec<(String, String)>, // [("color", "red"), ...]
+    pub selector: String,
+    pub properties: Vec<(String, String)>,
 }
 
 #[derive(Debug, Clone)]
 pub enum Statement {
-    Let {
-        name: String,
-        value: Expression,
-        line: usize,
-    },
+    Let { name: String, value: Expression, is_state: bool, line: usize },
+    Const { name: String, value: Expression, line: usize },
+    Assignment { name: String, value: Expression, line: usize },
+    Function { name: String, params: Vec<String>, body: Vec<Statement>, line: usize },
+    Return { value: Option<Expression>, line: usize },
+    If { condition: Expression, then_branch: Vec<Statement>, else_branch: Vec<Statement>, line: usize },
+    ForEach { var: String, iterable: Expression, body: Vec<Statement>, line: usize },
     HtmlElement {
         tag: String,
-        content: Expression,
+        content: Option<Expression>,
+        attrs: Vec<(String, Expression)>,
+        children: Option<Vec<Statement>>,
         events: Vec<Event>,
         line: usize,
     },
-    Call {
-        name: String,
-        args: Vec<Expression>,
-        line: usize,
-    },
+    Call { name: String, args: Vec<Expression>, line: usize },
 }
 
 #[derive(Debug, Clone)]
 pub struct Event {
-    pub kind: String,      // "click", "change"
+    pub kind: String,
     pub body: Vec<Statement>,
 }
 
@@ -47,17 +50,19 @@ pub enum Expression {
     Boolean(bool),
     Null,
     Identifier(String),
-    Binary {
-        left: Box<Expression>,
-        op: BinOp,
-        right: Box<Expression>,
-    },
+    List(Vec<Expression>),
+    Call { name: String, args: Vec<Expression> },
+    Binary { left: Box<Expression>, op: BinOp, right: Box<Expression> },
+    Comparison { left: Box<Expression>, op: CmpOp, right: Box<Expression> },
+    Logical { left: Box<Expression>, op: LogOp, right: Box<Expression> },
+    Not(Box<Expression>),
 }
 
 #[derive(Debug, Clone)]
-pub enum BinOp {
-    Add,
-    Sub,
-    Mul,
-    Div,
-}
+pub enum BinOp { Add, Sub, Mul, Div, Mod }
+
+#[derive(Debug, Clone)]
+pub enum CmpOp { Eq, Ne, Gt, Lt, Ge, Le }
+
+#[derive(Debug, Clone)]
+pub enum LogOp { And, Or }
