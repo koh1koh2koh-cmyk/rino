@@ -2,7 +2,7 @@
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
-  <title>بياناتي</title>
+  <title>قائمة مهامي</title>
   <style>
 h1 {
   color: white;
@@ -11,57 +11,60 @@ h1 {
   text-align: center;
   border-radius: 10px;
 }
-p {
-  font-size: 20px;
-  text-align: center;
-  margin: 10px;
-}
 input {
   padding: 10px;
-  font-size: 18px;
+  font-size: 16px;
   border-radius: 5px;
-  margin: 10px;
+  margin: 5px;
+  width: 300px;
 }
 button {
   background: green;
   color: white;
-  padding: 12px;
+  padding: 10px;
   border-radius: 5px;
+  margin: 5px;
+}
+p {
+  font-size: 18px;
+  text-align: center;
+  margin: 15px;
 }
   </style>
 </head>
 <body>
-<h1>أدخل بياناتك</h1><p id="r1"></p><input placeholder="اكتب اسمك هنا" id="r2"><p id="r3"></p><input placeholder="اكتب عمرك هنا" id="r4"><p id="r5"></p><div id="r6"></div>  <script>
+<h1>قائمة مهامي</h1><p>اكتب مهمة، ثم اضغط أضف</p><p>انقر على المهمة لحذفها</p><input placeholder="اكتب مهمة جديدة" id="حقل_المهمة"><button id="r1">أضف</button><button id="r2">امسح الكل</button><ul id="مهامي"></ul>  <script>
 
 function عدد(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function نص(v) { return String(v); }
-
-const حالة = new Proxy({  اسمي: "",
-  عمري: 0,
-}, {
-  set(target, key, value) {
-    target[key] = value;
-    updateAll();
-    return true;
-  }
-});
-
-document.getElementById('r2').addEventListener('change', function() {
-  حالة.اسمي = this.value;
-});
-document.getElementById('r4').addEventListener('change', function() {
-  حالة.عمري = عدد(this.value);
-});
-
-
-function updateAll() {
-  document.getElementById('r1').textContent = ("اسمك: " + حالة.اسمي);
-  document.getElementById('r3').textContent = ("عمرك: " + حالة.عمري);
-  document.getElementById('r5').textContent = ((("اسمك: " + حالة.اسمي) + " — عمرك: ") + حالة.عمري);
-  { const _c = (حالة.عمري > 18); const _e = document.getElementById('r6'); if (_e) _e.innerHTML = _c ? `<p>أنت بالغ ✓</p>` : `<p>أنت قاصر</p>`; }
+function اقرأ(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : "";
 }
-
-updateAll();
+function امسح(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = "";
+}
+function أضف_مهمة(id_قائمة, نص) {
+  const ul = document.getElementById(id_قائمة);
+  if (!ul) return;
+  const li = document.createElement("li");
+  li.textContent = نص;
+  li.style.padding = "10px";
+  li.style.marginTop = "5px";
+  li.style.background = "rgb(240, 240, 240)";
+  li.style.borderRadius = "5px";
+  li.style.cursor = "pointer";
+  li.title = "انقر للحذف";
+  li.onclick = function() { li.remove(); };
+  ul.appendChild(li);
+}
+document.getElementById('r1').addEventListener('click', function() {
+  أضف_مهمة("مهامي", اقرأ("حقل_المهمة"));
+});
+document.getElementById('r2').addEventListener('click', function() {
+  امسح("مهامي");
+});
 
   </script>
 </body>

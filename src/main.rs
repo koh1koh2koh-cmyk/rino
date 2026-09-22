@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.3 — شروط ديناميكية
+//! الإصدار 0.3
 
 mod ast;
 mod correction;
@@ -253,8 +253,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
     }
 }
 
-// ========== CSS ==========
-
 fn css_property(name: &str) -> &str {
     match name {
         "لون" => "color",
@@ -308,8 +306,6 @@ fn css_value(val: &str) -> String {
         _ => if val.parse::<f64>().is_ok() { format!("{}px", val) } else { val.to_string() },
     }
 }
-
-// ========== توليد الكود ==========
 
 struct Codegen {
     counter: usize,
@@ -432,8 +428,12 @@ impl Codegen {
         match stmt {
             Statement::HtmlElement { tag, content, attrs, children, events, .. } => {
                 let mut attr_str = String::new();
+                let mut existing_id: Option<String> = None;
                 for (k, v) in attrs {
                     let val = eval(v, env)?.to_display();
+                    if k == "id" {
+                        existing_id = Some(val.clone());
+                    }
                     attr_str.push_str(&format!(" {}=\"{}\"", k, val));
                 }
 
@@ -441,10 +441,16 @@ impl Codegen {
                     .map(|c| self.is_reactive(c, state_vars))
                     .unwrap_or(false);
                 let needs_id = needs_reactive || !events.is_empty();
-                let id = if needs_id { Some(self.next_id()) } else { None };
+                let id = if needs_id && existing_id.is_none() {
+                    Some(self.next_id())
+                } else {
+                    existing_id.clone()
+                };
 
-                if let Some(ref i) = id {
-                    attr_str.push_str(&format!(" id=\"{}\"", i));
+                if existing_id.is_none() {
+                    if let Some(ref i) = id {
+                        attr_str.push_str(&format!(" id=\"{}\"", i));
+                    }
                 }
 
                 let (open, close, self_closing) = match tag.as_str() {
@@ -485,12 +491,9 @@ impl Codegen {
                 Ok(format!("{}{}{}", open, inner, close))
             }
 
-            // ===== الشرط في الجسم — مع دعم ديناميكي =====
             Statement::If { condition, then_branch, else_branch, .. } => {
                 let needs_reactive = self.is_reactive(condition, state_vars);
-
                 if needs_reactive {
-                    // نولّد HTML للفرعين كسلسلة نصية
                     let mut then_html = String::new();
                     for st in then_branch {
                         then_html.push_str(&self.gen_html(st, env, state_vars)?);
@@ -499,30 +502,16 @@ impl Codegen {
                     for st in else_branch {
                         else_html.push_str(&self.gen_html(st, env, state_vars)?);
                     }
-
-                    // نضيف عنصرًا بمعرف فريد
                     let id = self.next_id();
                     let cond_js = self.expr_to_js(condition);
-
-                    // نهرب علامات ` و \ للاستخدام داخل قالب نصي
-                    let then_escaped = then_html
-                        .replace('\\', "\\\\")
-                        .replace('`', "\\`")
-                        .replace("${", "\\${");
-                    let else_escaped = else_html
-                        .replace('\\', "\\\\")
-                        .replace('`', "\\`")
-                        .replace("${", "\\${");
-
-                    // نضيف كود التحديث
+                    let then_escaped = then_html.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
+                    let else_escaped = else_html.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
                     self.updates_js.push_str(&format!(
                         "  {{ const _c = {}; const _e = document.getElementById('{}'); if (_e) _e.innerHTML = _c ? `{}` : `{}`; }}\n",
                         cond_js, id, then_escaped, else_escaped
                     ));
-
                     Ok(format!("<div id=\"{}\"></div>", id))
                 } else {
-                    // تقييم ثابت
                     let cond_val = eval(condition, env)?.as_bool();
                     let branch = if cond_val { then_branch } else { else_branch };
                     let mut s = String::new();
@@ -533,7 +522,6 @@ impl Codegen {
                 }
             }
 
-            // ===== الحلقة في الجسم =====
             Statement::ForEach { var, iterable, body, .. } => {
                 let iterable_val = eval(iterable, env)?;
                 if let Value::List(items) = iterable_val {
@@ -649,6 +637,28 @@ fn main() {
     let helpers = r#"
 function عدد(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
 function نص(v) { return String(v); }
+function اقرأ(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : "";
+}
+function امسح(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = "";
+}
+function أضف_مهمة(id_قائمة, نص) {
+  const ul = document.getElementById(id_قائمة);
+  if (!ul) return;
+  const li = document.createElement("li");
+  li.textContent = نص;
+  li.style.padding = "10px";
+  li.style.marginTop = "5px";
+  li.style.background = "rgb(240, 240, 240)";
+  li.style.borderRadius = "5px";
+  li.style.cursor = "pointer";
+  li.title = "انقر للحذف";
+  li.onclick = function() { li.remove(); };
+  ul.appendChild(li);
+}
 "#;
 
     let script = if !state_vars.is_empty() {

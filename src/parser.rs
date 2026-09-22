@@ -222,11 +222,27 @@ impl Parser {
             TokenKind::ListItem => self.parse_html("li"),
             TokenKind::List => {
                 self.advance();
+                self.expect(TokenKind::LParen)?;
+                let mut args = Vec::new();
+                if *self.kind() != TokenKind::RParen {
+                    args.push(self.parse_expression()?);
+                    while *self.kind() == TokenKind::Comma {
+                        self.advance();
+                        args.push(self.parse_expression()?);
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+
+                let mut attrs = vec![];
+                if let Some(id_expr) = args.into_iter().next() {
+                    attrs.push(("id".into(), id_expr));
+                }
+
                 let children = self.parse_block()?;
                 Ok(Statement::HtmlElement {
                     tag: "ul".into(),
                     content: None,
-                    attrs: vec![],
+                    attrs,
                     children: Some(children),
                     events: vec![],
                     line: tok.line,
@@ -250,7 +266,6 @@ impl Parser {
                     line: tok.line,
                 })
             }
-            // تجاهل الكلمات المنطقية الشاردة (و، أو) بشكل صامت
             TokenKind::And | TokenKind::Or => {
                 self.advance();
                 Ok(Statement::Call {
@@ -384,25 +399,32 @@ impl Parser {
                 (None, vec![("src".into(), a)])
             }
             "input" => {
-                let a = args
-                    .into_iter()
+                let mut it = args.into_iter();
+                let placeholder = it
                     .next()
                     .ok_or_else(|| "مدخل يحتاج نصًا".to_string())?;
-                (None, vec![("placeholder".into(), a)])
+                let mut attrs = vec![("placeholder".into(), placeholder)];
+                if let Some(id_expr) = it.next() {
+                    attrs.push(("id".into(), id_expr));
+                }
+                (None, attrs)
             }
             "a" => {
                 let mut it = args.into_iter();
-                let text = it
-                    .next()
-                    .ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
+                let text = it.next().ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
                 let url = it
                     .next()
                     .ok_or_else(|| "رابط يحتاج عنوان URL".to_string())?;
                 (Some(text), vec![("href".into(), url)])
             }
             _ => {
-                let c = args.into_iter().next();
-                (c, vec![])
+                let mut it = args.into_iter();
+                let c = it.next();
+                let mut attrs = vec![];
+                if let Some(id_expr) = it.next() {
+                    attrs.push(("id".into(), id_expr));
+                }
+                (c, attrs)
             }
         };
 
