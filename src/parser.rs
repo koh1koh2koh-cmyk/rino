@@ -114,7 +114,6 @@ impl Parser {
         Ok(Statement::ComponentDef { name, params, body, line: tok.line })
     }
 
-    /// يقرأ محدد CSS كامل: `عنوان`, `.بطاقة`, `#رئيسي`
     fn parse_selector(&mut self) -> Result<(String, SelectorKind), String> {
         let kind_marker = self.kind().clone();
         match kind_marker {
@@ -151,14 +150,11 @@ impl Parser {
         }
     }
 
-    /// يقرأ خصائص CSS: `{ لون: "أحمر" ... }`
     fn parse_properties(&mut self) -> Result<Vec<(String, String)>, String> {
         self.expect(TokenKind::LBrace)?;
         let mut props = Vec::new();
         while *self.kind() != TokenKind::RBrace {
-            // هل هو عند_المرور؟ (يُعالج من الخارج)
             if *self.kind() == TokenKind::OnHover { break; }
-
             let name = self.expect_ident()?;
             self.expect(TokenKind::Colon)?;
             let val = match self.advance().kind {
@@ -194,7 +190,6 @@ impl Parser {
                     self.expect(TokenKind::RBrace)?;
                     continue;
                 }
-
                 let name = self.expect_ident()?;
                 self.expect(TokenKind::Colon)?;
                 let val = match self.advance().kind {
@@ -510,6 +505,22 @@ impl Parser {
     }
 
     fn parse_primary(&mut self) -> Result<Expression, String> {
+        let mut expr = self.parse_atom()?;
+
+        // سلسلة الوصول: `شخص.اسم.أول`
+        while *self.kind() == TokenKind::Dot {
+            self.advance();
+            let prop = self.expect_ident()?;
+            expr = Expression::MemberAccess {
+                object: Box::new(expr),
+                property: prop,
+            };
+        }
+
+        Ok(expr)
+    }
+
+    fn parse_atom(&mut self) -> Result<Expression, String> {
         let tok = self.advance();
         match tok.kind {
             TokenKind::String(s) => Ok(Expression::String(s)),
@@ -548,6 +559,26 @@ impl Parser {
                 }
                 self.expect(TokenKind::RBracket)?;
                 Ok(Expression::List(items))
+            }
+            // ========== قاموس ==========
+            TokenKind::LBrace => {
+                let mut pairs = Vec::new();
+                if *self.kind() != TokenKind::RBrace {
+                    loop {
+                        let key = match self.advance().kind {
+                            TokenKind::Identifier(s) => s,
+                            TokenKind::String(s) => s,
+                            other => return Err(format!("متوقع اسم خاصية، وجد {:?}", other)),
+                        };
+                        self.expect(TokenKind::Colon)?;
+                        let value = self.parse_expression()?;
+                        pairs.push((key, value));
+                        if *self.kind() == TokenKind::Comma { self.advance(); }
+                        else { break; }
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                Ok(Expression::Dict(pairs))
             }
             other => Err(format!("تعبير غير متوقع {:?} في السطر {}", other, tok.line)),
         }

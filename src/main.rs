@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.8 — الكلاسات والمعرفات وعند_المرور
+//! الإصدار 0.9 — القواميس
 
 mod ast;
 mod correction;
@@ -99,7 +99,14 @@ fn process_imports(source: &str, base_dir: &Path, visited: &mut HashSet<PathBuf>
 }
 
 #[derive(Debug, Clone)]
-enum Value { Str(String), Num(f64), Bool(bool), Null, List(Vec<Value>) }
+enum Value {
+    Str(String),
+    Num(f64),
+    Bool(bool),
+    Null,
+    List(Vec<Value>),
+    Dict(Vec<(String, Value)>),
+}
 
 impl Value {
     fn to_display(&self) -> String {
@@ -109,6 +116,10 @@ impl Value {
             Value::Bool(b) => if *b { "صحيح" } else { "خطأ" }.to_string(),
             Value::Null => String::new(),
             Value::List(items) => items.iter().map(|v| v.to_display()).collect::<Vec<_>>().join("، "),
+            Value::Dict(pairs) => {
+                let p: Vec<String> = pairs.iter().map(|(k, v)| format!("{}: {}", k, v.to_display())).collect();
+                format!("{{{}}}", p.join(", "))
+            }
         }
     }
     fn as_num(&self) -> Result<f64, String> {
@@ -123,6 +134,7 @@ impl Value {
             Value::Bool(b) => *b, Value::Num(n) => *n != 0.0,
             Value::Str(s) => !s.is_empty(), Value::Null => false,
             Value::List(v) => !v.is_empty(),
+            Value::Dict(p) => !p.is_empty(),
         }
     }
     fn to_js_literal(&self) -> String {
@@ -134,6 +146,10 @@ impl Value {
             Value::List(items) => {
                 let i: Vec<String> = items.iter().map(|x| x.to_js_literal()).collect();
                 format!("[{}]", i.join(", "))
+            }
+            Value::Dict(pairs) => {
+                let p: Vec<String> = pairs.iter().map(|(k, v)| format!("\"{}\": {}", k, v.to_js_literal())).collect();
+                format!("{{{}}}", p.join(", "))
             }
         }
     }
@@ -152,6 +168,23 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
             for i in items { vs.push(eval(i, env)?); }
             Ok(Value::List(vs))
         }
+        Expression::Dict(pairs) => {
+            let mut map = Vec::new();
+            for (k, v) in pairs { map.push((k.clone(), eval(v, env)?)); }
+            Ok(Value::Dict(map))
+        }
+        Expression::MemberAccess { object, property } => {
+            let obj = eval(object, env)?;
+            match obj {
+                Value::Dict(pairs) => {
+                    pairs.iter()
+                        .find(|(k, _)| k == property)
+                        .map(|(_, v)| v.clone())
+                        .ok_or_else(|| format!("الخاصية \"{}\" غير موجودة", property))
+                }
+                _ => Err("لا يمكن الوصول لخاصية من نوع غير قاموس".into()),
+            }
+        }
         Expression::Call { name, args } => {
             let mut vs = Vec::new();
             for a in args { vs.push(eval(a, env)?); }
@@ -159,7 +192,28 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                 "طول" => match vs.first() {
                     Some(Value::List(l)) => Ok(Value::Num(l.len() as f64)),
                     Some(Value::Str(s)) => Ok(Value::Num(s.chars().count() as f64)),
-                    _ => Err("طول تحتاج قائمة أو نصًا".into()),
+                    Some(Value::Dict(p)) => Ok(Value::Num(p.len() as f64)),
+                    _ => Err("طول تحتاج قائمة أو نصًا أو قاموسًا".into()),
+                },
+                "مفاتيح" => match vs.first() {
+                    Some(Value::Dict(p)) => {
+                        let keys: Vec<Value> = p.iter().map(|(k, _)| Value::Str(k.clone())).collect();
+                        Ok(Value::List(keys))
+                    }
+                    _ => Err("مفاتيح تحتاج قاموسًا".into()),
+                },
+                "قيم" => match vs.first() {
+                    Some(Value::Dict(p)) => {
+                        let values: Vec<Value> = p.iter().map(|(_, v)| v.clone()).collect();
+                        Ok(Value::List(values))
+                    }
+                    _ => Err("قيم تحتاج قاموسًا".into()),
+                },
+                "يحتوي_مفتاح" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::Dict(p)), Some(Value::Str(k))) => {
+                        Ok(Value::Bool(p.iter().any(|(key, _)| key == k)))
+                    }
+                    _ => Err("يحتوي_مفتاح تحتاج قاموسًا ونصًا".into()),
                 },
                 "كبير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())), _ => Err("كبير تحتاج نصًا".into()) },
                 "صغير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())), _ => Err("صغير تحتاج نصًا".into()) },
@@ -288,6 +342,8 @@ impl Codegen {
             }
             Expression::Not(e) => self.is_reactive(e, state_vars),
             Expression::List(items) => items.iter().any(|i| self.is_reactive(i, state_vars)),
+            Expression::Dict(pairs) => pairs.iter().any(|(_, v)| self.is_reactive(v, state_vars)),
+            Expression::MemberAccess { object, .. } => self.is_reactive(object, state_vars),
             Expression::Call { args, .. } => args.iter().any(|a| self.is_reactive(a, state_vars)),
             _ => false,
         }
@@ -303,6 +359,15 @@ impl Codegen {
             Expression::List(items) => {
                 let list: Vec<String> = items.iter().map(|i| self.expr_to_js(i)).collect();
                 format!("[{}]", list.join(", "))
+            }
+            Expression::Dict(pairs) => {
+                let p: Vec<String> = pairs.iter()
+                    .map(|(k, v)| format!("\"{}\": {}", k, self.expr_to_js(v)))
+                    .collect();
+                format!("{{{}}}", p.join(", "))
+            }
+            Expression::MemberAccess { object, property } => {
+                format!("{}.{}", self.expr_to_js(object), property)
             }
             Expression::Call { name, args } => {
                 if name == "اقرأ_مدخل" && args.is_empty() { return "this.value".to_string(); }
@@ -476,6 +541,24 @@ impl Codegen {
                     Ok(html)
                 } else { Ok(String::new()) }
             }
+
+            // ===== المتغيرات: احفظها في البيئة =====
+            Statement::Let { name, value, .. } => {
+                let v = eval(value, env)?;
+                env.insert(name.clone(), v);
+                Ok(String::new())
+            }
+            Statement::Const { name, value, .. } => {
+                let v = eval(value, env)?;
+                env.insert(name.clone(), v);
+                Ok(String::new())
+            }
+            Statement::Assignment { name, value, .. } => {
+                let v = eval(value, env)?;
+                env.insert(name.clone(), v);
+                Ok(String::new())
+            }
+
             _ => Ok(String::new()),
         }
     }
@@ -561,6 +644,20 @@ fn main() {
         }
     }
 
+    // ===== اجمع المتغيرات من body =====
+    for s in &program.body {
+        if let Statement::Let { name, value, .. } = s {
+            if let Ok(v) = eval(value, &env) {
+                env.insert(name.clone(), v);
+            }
+        }
+        if let Statement::Const { name, value, .. } = s {
+            if let Ok(v) = eval(value, &env) {
+                env.insert(name.clone(), v);
+            }
+        }
+    }
+
     let mut funcs_js = String::new();
     for f in &program.functions {
         if let Statement::Function { name, params, body, .. } = f {
@@ -583,7 +680,6 @@ fn main() {
         body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
     }
 
-    // ========== CSS مع كلاسات ومعرفات وعند_المرور ==========
     let mut css = String::new();
     for r in &program.styles {
         let selector_prefix = match r.selector_kind {
@@ -591,15 +687,11 @@ fn main() {
             SelectorKind::Class => ".",
             SelectorKind::Id => "#",
         };
-
-        // القاعدة الأساسية
         css.push_str(&format!("{}{} {{\n", selector_prefix, r.selector));
         for (p, v) in &r.properties {
             css.push_str(&format!("  {}: {};\n", css_property(p), css_value(v)));
         }
         css.push_str("}\n");
-
-        // عند_المرور
         if !r.hover_properties.is_empty() {
             css.push_str(&format!("{}{}:hover {{\n", selector_prefix, r.selector));
             for (p, v) in &r.hover_properties {
@@ -647,6 +739,9 @@ function أضف_مهمة(id_قائمة, نص) {
   li.onclick = function() { li.remove(); };
   ul.appendChild(li);
 }
+function مفاتيح(d) { return Object.keys(d); }
+function قيم(d) { return Object.values(d); }
+function يحتوي_مفتاح(d, k) { return k in d; }
 "#;
 
     let script = if !state_vars.is_empty() {

@@ -22,9 +22,9 @@ pub struct StyleRule {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelectorKind {
-    Tag,    // h1, p, button
-    Class,  // .بطاقة
-    Id,     // #رئيسي
+    Tag,
+    Class,
+    Id,
 }
 
 #[derive(Debug, Clone)]
@@ -62,6 +62,8 @@ pub enum Expression {
     Null,
     Identifier(String),
     List(Vec<Expression>),
+    Dict(Vec<(String, Expression)>),
+    MemberAccess { object: Box<Expression>, property: String },
     Call { name: String, args: Vec<Expression> },
     Binary { left: Box<Expression>, op: BinOp, right: Box<Expression> },
     Comparison { left: Box<Expression>, op: CmpOp, right: Box<Expression> },
