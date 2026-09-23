@@ -1,0 +1,31 @@
+div {
+  background: white;
+  padding: 30px;
+  border-radius: 10px;
+  margin: 20px;
+  text-align: center;
+}
+h1 {
+  text-align: center;
+  color: purple;
+  font-size: 36px;
+}
+p {
+  text-align: center;
+  font-size: 20px;
+  margin: 15px;
+}
+a {
+  background: blue;
+  color: white;
+  padding: 12px;
+  border-radius: 5px;
+  margin: 10px;
+  font-size: 18px;
+}
+input {
+  padding: 12px;
+  font-size: 18px;
+  border-radius: 8px;
+  margin: 10px;
+}
