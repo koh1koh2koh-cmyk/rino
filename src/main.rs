@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.3
+//! الإصدار 0.5 — أداة CLI حقيقية
 
 mod ast;
 mod correction;
@@ -74,6 +74,7 @@ use lexer::Lexer;
 use parser::Parser;
 use std::collections::HashMap;
 use std::fs;
+use std::path::PathBuf;
 
 #[derive(Debug, Clone)]
 enum Value {
@@ -547,25 +548,61 @@ impl Codegen {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // ========== أمر التنسيق ==========
     if args.len() > 2 && args[1] == "format" {
-        let file = &args[2];
-        let source = match fs::read_to_string(file) {
+        let file_path = PathBuf::from(&args[2]);
+        let source = match fs::read_to_string(&file_path) {
             Ok(s) => s,
             Err(e) => { eprintln!("❌ فشل قراءة الملف: {}", e); std::process::exit(1); }
         };
         let mut fmt = formatter::Formatter::new();
         let formatted = fmt.format(&source);
-        if let Err(e) = fs::write(file, &formatted) {
+        if let Err(e) = fs::write(&file_path, &formatted) {
             eprintln!("❌ فشل الحفظ: {}", e);
             std::process::exit(1);
         }
-        println!("✅ تم تنسيق: {}", file);
+        println!("✅ تم تنسيق: {}", file_path.display());
         return;
     }
 
-    let input = if args.len() > 1 { args[1].clone() } else { "index.rino".into() };
-    println!("📂 {}", input);
-    let source = match fs::read_to_string(&input) {
+    // ========== تحليل المسار ==========
+    let input_path: PathBuf = if args.len() > 1 {
+        PathBuf::from(&args[1])
+    } else {
+        PathBuf::from("index.rino")
+    };
+
+    if !input_path.exists() {
+        eprintln!("❌ الملف غير موجود: {}", input_path.display());
+        eprintln!();
+        eprintln!("الاستخدام:");
+        eprintln!("   rino <ملف.rino>         — بناء الملف");
+        eprintln!("   rino format <ملف.rino>  — تنسيق الملف");
+        std::process::exit(1);
+    }
+
+    // مسار الإخراج (نفس مجلد الملف الأصلي)
+    let input_dir = input_path.parent()
+        .map(|p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() })
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    let base_name = input_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("index")
+        .to_string();
+
+    let output_html_path = input_dir.join(format!("{}.html", base_name));
+    let output_css_path  = input_dir.join(format!("{}.css", base_name));
+    let output_js_path   = input_dir.join(format!("{}.js", base_name));
+
+    let html_filename = format!("{}.html", base_name);
+    let css_filename  = format!("{}.css", base_name);
+    let js_filename   = format!("{}.js", base_name);
+
+    println!("📂 {}", input_path.display());
+
+    let source = match fs::read_to_string(&input_path) {
         Ok(s) => s,
         Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
     };
@@ -687,24 +724,44 @@ updateAll();
         format!("{}{}", helpers, cg.events_js)
     };
 
+    // ========== كتابة 3 ملفات ==========
+
     let html = format!(r#"<!DOCTYPE html>
 <html lang="ar" dir="rtl">
 <head>
   <meta charset="UTF-8">
   <title>{title}</title>
-  <style>
-{css}  </style>
+  <link rel="stylesheet" href="{css_file}">
 </head>
 <body>
-{body}  <script>
-{funcs}{script}
-  </script>
+{body}  <script src="{js_file}"></script>
 </body>
 </html>
 "#,
-        title = title, css = css, body = body_html, funcs = funcs_js, script = script
+        title = title,
+        css_file = css_filename,
+        js_file = js_filename,
+        body = body_html
     );
 
-    fs::write("index.html", &html).expect("فشل الكتابة");
-    println!("✅ تم التوليد: index.html");
+    let css_content = css;
+    let js_content = format!("{}{}", funcs_js, script);
+
+    if let Err(e) = fs::write(&output_html_path, &html) {
+        eprintln!("❌ فشل كتابة {}: {}", output_html_path.display(), e);
+        std::process::exit(1);
+    }
+    if let Err(e) = fs::write(&output_css_path, &css_content) {
+        eprintln!("❌ فشل كتابة {}: {}", output_css_path.display(), e);
+        std::process::exit(1);
+    }
+    if let Err(e) = fs::write(&output_js_path, &js_content) {
+        eprintln!("❌ فشل كتابة {}: {}", output_js_path.display(), e);
+        std::process::exit(1);
+    }
+
+    println!("✅ تم التوليد:");
+    println!("   📄 {}", output_html_path.display());
+    println!("   🎨 {}", output_css_path.display());
+    println!("   ⚙️  {}", output_js_path.display());
 }

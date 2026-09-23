@@ -1,0 +1,40 @@
+h1 {
+  color: white;
+  background: blue;
+  padding: 40px;
+  text-align: center;
+  border-radius: 15px;
+}
+p {
+  font-size: 18px;
+  text-align: center;
+  margin: 15px;
+}
+button {
+  background: green;
+  color: white;
+  padding: 12px;
+  border-radius: 8px;
+  margin: 8px;
+}
+input {
+  padding: 12px;
+  font-size: 16px;
+  border-radius: 8px;
+  margin: 8px;
+  width: 350px;
+}
+a {
+  color: blue;
+  font-size: 18px;
+  margin: 10px;
+}
+ul {
+  text-align: center;
+}
+li {
+  padding: 10px;
+  margin: 5px;
+  color: black;
+  font-size: 18px;
+}
