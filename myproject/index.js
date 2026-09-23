@@ -1,0 +1,25 @@
+
+function عدد(v) { const n = parseFloat(v); return isNaN(n) ? 0 : n; }
+function نص(v) { return String(v); }
+function اقرأ(id) {
+  const el = document.getElementById(id);
+  return el ? el.value : "";
+}
+function امسح(id) {
+  const el = document.getElementById(id);
+  if (el) el.innerHTML = "";
+}
+function أضف_مهمة(id_قائمة, نص) {
+  const ul = document.getElementById(id_قائمة);
+  if (!ul) return;
+  const li = document.createElement("li");
+  li.textContent = نص;
+  li.style.padding = "10px";
+  li.style.marginTop = "5px";
+  li.style.background = "rgb(240, 240, 240)";
+  li.style.borderRadius = "5px";
+  li.style.cursor = "pointer";
+  li.title = "انقر للحذف";
+  li.onclick = function() { li.remove(); };
+  ul.appendChild(li);
+}

@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.5 — أداة CLI حقيقية
+//! الإصدار 0.6 — نظام الاستيراد
 
 mod ast;
 mod correction;
@@ -72,9 +72,73 @@ mod formatter {
 use ast::*;
 use lexer::Lexer;
 use parser::Parser;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
+
+// ========== نظام الاستيراد ==========
+
+/// يقرأ ملف Rino، ويعالج كل `استيراد "..."` فيه بشكل تكراري.
+fn process_imports(
+    source: &str,
+    base_dir: &Path,
+    visited: &mut HashSet<PathBuf>,
+    depth: usize,
+) -> Result<String, String> {
+    if depth > 20 {
+        return Err("عدد الاستيرادات المتتالية كبير جدًا".into());
+    }
+
+    let mut output = String::new();
+
+    for line in source.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with("استيراد ") {
+            let rest = trimmed["استيراد".len()..].trim();
+
+            if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+                let rel_path = &rest[1..rest.len() - 1];
+                let file_path = base_dir.join(rel_path);
+
+                let canonical = file_path
+                    .canonicalize()
+                    .map_err(|_| format!("ملف غير موجود: {}", file_path.display()))?;
+
+                if visited.contains(&canonical) {
+                    // تجنّب التكرار
+                    output.push('\n');
+                    continue;
+                }
+                visited.insert(canonical.clone());
+
+                let content = fs::read_to_string(&file_path)
+                    .map_err(|e| format!("فشل قراءة {}: {}", file_path.display(), e))?;
+
+                let new_base = file_path
+                    .parent()
+                    .map(|p| p.to_path_buf())
+                    .unwrap_or_else(|| base_dir.to_path_buf());
+
+                let processed = process_imports(&content, &new_base, visited, depth + 1)?;
+                output.push_str(&processed);
+                output.push('\n');
+            } else {
+                return Err(format!(
+                    "صيغة استيراد خاطئة: {} (الصحيح: استيراد \"مسار/ملف.rino\")",
+                    trimmed
+                ));
+            }
+        } else {
+            output.push_str(line);
+            output.push('\n');
+        }
+    }
+
+    Ok(output)
+}
+
+// ========== تقييم وقت الترجمة ==========
 
 #[derive(Debug, Clone)]
 enum Value {
@@ -581,7 +645,6 @@ fn main() {
         std::process::exit(1);
     }
 
-    // مسار الإخراج (نفس مجلد الملف الأصلي)
     let input_dir = input_path.parent()
         .map(|p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() })
         .unwrap_or_else(|| PathBuf::from("."));
@@ -603,6 +666,16 @@ fn main() {
     println!("📂 {}", input_path.display());
 
     let source = match fs::read_to_string(&input_path) {
+        Ok(s) => s,
+        Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
+    };
+
+    // ========== معالجة الاستيرادات ==========
+    let mut visited = HashSet::new();
+    if let Ok(canonical) = input_path.canonicalize() {
+        visited.insert(canonical);
+    }
+    let source = match process_imports(&source, &input_dir, &mut visited, 0) {
         Ok(s) => s,
         Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
     };
@@ -723,8 +796,6 @@ updateAll();
     } else {
         format!("{}{}", helpers, cg.events_js)
     };
-
-    // ========== كتابة 3 ملفات ==========
 
     let html = format!(r#"<!DOCTYPE html>
 <html lang="ar" dir="rtl">
