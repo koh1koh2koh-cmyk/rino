@@ -1,5 +1,5 @@
 #![allow(dead_code)]
-//! شجرة الكود المجردة (AST).
+//! شجرة الكود المجردة (AST) للغة Rino.
 
 #[derive(Debug, Clone)]
 pub struct Program {
@@ -7,6 +7,7 @@ pub struct Program {
     pub styles: Vec<StyleRule>,
     pub state: Vec<Statement>,
     pub functions: Vec<Statement>,
+    pub components: Vec<Statement>,
     pub body: Vec<Statement>,
     pub top_level: Vec<Statement>,
 }
@@ -23,6 +24,7 @@ pub enum Statement {
     Const { name: String, value: Expression, line: usize },
     Assignment { name: String, value: Expression, line: usize },
     Function { name: String, params: Vec<String>, body: Vec<Statement>, line: usize },
+    ComponentDef { name: String, params: Vec<String>, body: Vec<Statement>, line: usize },
     Return { value: Option<Expression>, line: usize },
     If { condition: Expression, then_branch: Vec<Statement>, else_branch: Vec<Statement>, line: usize },
     ForEach { var: String, iterable: Expression, body: Vec<Statement>, line: usize },

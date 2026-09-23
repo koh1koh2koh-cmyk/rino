@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.6 — نظام الاستيراد
+//! الإصدار 0.7 — المكونات
 
 mod ast;
 mod correction;
@@ -78,7 +78,6 @@ use std::path::{Path, PathBuf};
 
 // ========== نظام الاستيراد ==========
 
-/// يقرأ ملف Rino، ويعالج كل `استيراد "..."` فيه بشكل تكراري.
 fn process_imports(
     source: &str,
     base_dir: &Path,
@@ -106,7 +105,6 @@ fn process_imports(
                     .map_err(|_| format!("ملف غير موجود: {}", file_path.display()))?;
 
                 if visited.contains(&canonical) {
-                    // تجنّب التكرار
                     output.push('\n');
                     continue;
                 }
@@ -376,11 +374,19 @@ struct Codegen {
     counter: usize,
     events_js: String,
     updates_js: String,
+    components: HashMap<String, (Vec<String>, Vec<Statement>)>,
+    depth: usize,
 }
 
 impl Codegen {
     fn new() -> Self {
-        Self { counter: 0, events_js: String::new(), updates_js: String::new() }
+        Self {
+            counter: 0,
+            events_js: String::new(),
+            updates_js: String::new(),
+            components: HashMap::new(),
+            depth: 0,
+        }
     }
 
     fn next_id(&mut self) -> String {
@@ -603,7 +609,40 @@ impl Codegen {
                 } else { Ok(String::new()) }
             }
 
-            Statement::Call { name, .. } if name == "_skip_" => Ok(String::new()),
+            // ===== استدعاء مكون =====
+            Statement::Call { name, args, .. } => {
+                if name == "_skip_" { return Ok(String::new()); }
+
+                // هل هذا مكون؟
+                let component = self.components.get(name).cloned();
+                if let Some((params, body)) = component {
+                    if self.depth > 20 {
+                        return Err("استدعاء متكرر لا نهائي للمكونات".into());
+                    }
+
+                    // اربط الوسائط بالمعاملات في env جديد
+                    let mut new_env: HashMap<String, Value> = HashMap::new();
+                    for (i, p) in params.iter().enumerate() {
+                        if let Some(arg) = args.get(i) {
+                            let v = eval(arg, env)?;
+                            new_env.insert(p.clone(), v);
+                        }
+                    }
+
+                    // ولّد HTML للجسم
+                    self.depth += 1;
+                    let mut html = String::new();
+                    for stmt in &body {
+                        html.push_str(&self.gen_html(stmt, &mut new_env, state_vars)?);
+                    }
+                    self.depth -= 1;
+                    Ok(html)
+                } else {
+                    // دالة عادية - نتركها لتُعالج كـ no-op في HTML
+                    Ok(String::new())
+                }
+            }
+
             _ => Ok(String::new()),
         }
     }
@@ -612,7 +651,6 @@ impl Codegen {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // ========== أمر التنسيق ==========
     if args.len() > 2 && args[1] == "format" {
         let file_path = PathBuf::from(&args[2]);
         let source = match fs::read_to_string(&file_path) {
@@ -629,7 +667,6 @@ fn main() {
         return;
     }
 
-    // ========== تحليل المسار ==========
     let input_path: PathBuf = if args.len() > 1 {
         PathBuf::from(&args[1])
     } else {
@@ -670,7 +707,6 @@ fn main() {
         Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
     };
 
-    // ========== معالجة الاستيرادات ==========
     let mut visited = HashSet::new();
     if let Ok(canonical) = input_path.canonicalize() {
         visited.insert(canonical);
@@ -716,7 +752,14 @@ fn main() {
         }
     }
 
+    // ========== جمع المكونات ==========
     let mut cg = Codegen::new();
+    for c in &program.components {
+        if let Statement::ComponentDef { name, params, body, .. } = c {
+            cg.components.insert(name.clone(), (params.clone(), body.clone()));
+        }
+    }
+
     let mut body_html = String::new();
     for s in &program.body {
         body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
