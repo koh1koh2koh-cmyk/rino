@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.7 — المكونات
+//! الإصدار 0.8 — الكلاسات والمعرفات وعند_المرور
 
 mod ast;
 mod correction;
@@ -8,14 +8,9 @@ mod parser;
 mod token;
 
 mod formatter {
-    pub struct Formatter {
-        indent: usize,
-        indent_size: usize,
-    }
+    pub struct Formatter { indent: usize, indent_size: usize }
     impl Formatter {
-        pub fn new() -> Self {
-            Self { indent: 0, indent_size: 2 }
-        }
+        pub fn new() -> Self { Self { indent: 0, indent_size: 2 } }
         pub fn format(&mut self, source: &str) -> String {
             let mut output = String::new();
             let mut in_string = false;
@@ -23,11 +18,7 @@ mod formatter {
             let mut last_char: Option<char> = None;
             for ch in source.chars() {
                 if ch == '"' && last_char != Some('\\') { in_string = !in_string; }
-                if in_string {
-                    current_line.push(ch);
-                    last_char = Some(ch);
-                    continue;
-                }
+                if in_string { current_line.push(ch); last_char = Some(ch); continue; }
                 match ch {
                     '{' => {
                         current_line.push('{');
@@ -76,76 +67,39 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
-// ========== نظام الاستيراد ==========
-
-fn process_imports(
-    source: &str,
-    base_dir: &Path,
-    visited: &mut HashSet<PathBuf>,
-    depth: usize,
-) -> Result<String, String> {
-    if depth > 20 {
-        return Err("عدد الاستيرادات المتتالية كبير جدًا".into());
-    }
-
+fn process_imports(source: &str, base_dir: &Path, visited: &mut HashSet<PathBuf>, depth: usize) -> Result<String, String> {
+    if depth > 20 { return Err("عدد الاستيرادات المتتالية كبير جدًا".into()); }
     let mut output = String::new();
-
     for line in source.lines() {
         let trimmed = line.trim();
-
         if trimmed.starts_with("استيراد ") {
             let rest = trimmed["استيراد".len()..].trim();
-
             if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
                 let rel_path = &rest[1..rest.len() - 1];
                 let file_path = base_dir.join(rel_path);
-
-                let canonical = file_path
-                    .canonicalize()
+                let canonical = file_path.canonicalize()
                     .map_err(|_| format!("ملف غير موجود: {}", file_path.display()))?;
-
-                if visited.contains(&canonical) {
-                    output.push('\n');
-                    continue;
-                }
+                if visited.contains(&canonical) { output.push('\n'); continue; }
                 visited.insert(canonical.clone());
-
                 let content = fs::read_to_string(&file_path)
                     .map_err(|e| format!("فشل قراءة {}: {}", file_path.display(), e))?;
-
-                let new_base = file_path
-                    .parent()
-                    .map(|p| p.to_path_buf())
-                    .unwrap_or_else(|| base_dir.to_path_buf());
-
+                let new_base = file_path.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| base_dir.to_path_buf());
                 let processed = process_imports(&content, &new_base, visited, depth + 1)?;
                 output.push_str(&processed);
                 output.push('\n');
             } else {
-                return Err(format!(
-                    "صيغة استيراد خاطئة: {} (الصحيح: استيراد \"مسار/ملف.rino\")",
-                    trimmed
-                ));
+                return Err(format!("صيغة استيراد خاطئة: {}", trimmed));
             }
         } else {
             output.push_str(line);
             output.push('\n');
         }
     }
-
     Ok(output)
 }
 
-// ========== تقييم وقت الترجمة ==========
-
 #[derive(Debug, Clone)]
-enum Value {
-    Str(String),
-    Num(f64),
-    Bool(bool),
-    Null,
-    List(Vec<Value>),
-}
+enum Value { Str(String), Num(f64), Bool(bool), Null, List(Vec<Value>) }
 
 impl Value {
     fn to_display(&self) -> String {
@@ -166,10 +120,8 @@ impl Value {
     }
     fn as_bool(&self) -> bool {
         match self {
-            Value::Bool(b) => *b,
-            Value::Num(n) => *n != 0.0,
-            Value::Str(s) => !s.is_empty(),
-            Value::Null => false,
+            Value::Bool(b) => *b, Value::Num(n) => *n != 0.0,
+            Value::Str(s) => !s.is_empty(), Value::Null => false,
             Value::List(v) => !v.is_empty(),
         }
     }
@@ -209,66 +161,31 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     Some(Value::Str(s)) => Ok(Value::Num(s.chars().count() as f64)),
                     _ => Err("طول تحتاج قائمة أو نصًا".into()),
                 },
-                "كبير" => match vs.first() {
-                    Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())),
-                    _ => Err("كبير تحتاج نصًا".into()),
-                },
-                "صغير" => match vs.first() {
-                    Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())),
-                    _ => Err("صغير تحتاج نصًا".into()),
-                },
+                "كبير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())), _ => Err("كبير تحتاج نصًا".into()) },
+                "صغير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())), _ => Err("صغير تحتاج نصًا".into()) },
                 "يحتوي" => match (vs.get(0), vs.get(1)) {
                     (Some(Value::Str(s)), Some(Value::Str(sub))) => Ok(Value::Bool(s.contains(sub.as_str()))),
                     _ => Err("يحتوي تحتاج نصين".into()),
                 },
                 "استبدل" => match (vs.get(0), vs.get(1), vs.get(2)) {
-                    (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => {
-                        Ok(Value::Str(s.replace(a.as_str(), b.as_str())))
-                    }
+                    (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Str(s.replace(a.as_str(), b.as_str()))),
                     _ => Err("استبدل تحتاج 3 نصوص".into()),
                 },
-                "جذر" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?.sqrt())),
-                    _ => Err("جذر تحتاج عددًا".into()),
-                },
-                "قوة" => match (vs.get(0), vs.get(1)) {
-                    (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))),
-                    _ => Err("قوة تحتاج عددين".into()),
-                },
-                "قوس" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?.round())),
-                    _ => Err("قوس تحتاج عددًا".into()),
-                },
-                "أرضي" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?.floor())),
-                    _ => Err("أرضي تحتاج عددًا".into()),
-                },
-                "سقف" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?.ceil())),
-                    _ => Err("سقف تحتاج عددًا".into()),
-                },
-                "مطلق" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?.abs())),
-                    _ => Err("مطلق تحتاج عددًا".into()),
-                },
+                "جذر" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.sqrt())), _ => Err("جذر تحتاج عددًا".into()) },
+                "قوة" => match (vs.get(0), vs.get(1)) { (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))), _ => Err("قوة تحتاج عددين".into()) },
+                "قوس" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.round())), _ => Err("قوس تحتاج عددًا".into()) },
+                "أرضي" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.floor())), _ => Err("أرضي تحتاج عددًا".into()) },
+                "سقف" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.ceil())), _ => Err("سقف تحتاج عددًا".into()) },
+                "مطلق" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.abs())), _ => Err("مطلق تحتاج عددًا".into()) },
                 "أصغر" => match (vs.get(0), vs.get(1)) {
-                    (Some(a), Some(b)) => {
-                        let (x, y) = (a.as_num()?, b.as_num()?);
-                        Ok(Value::Num(if x < y { x } else { y }))
-                    }
+                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x < y { x } else { y })) }
                     _ => Err("أصغر تحتاج عددين".into()),
                 },
                 "أكبر" => match (vs.get(0), vs.get(1)) {
-                    (Some(a), Some(b)) => {
-                        let (x, y) = (a.as_num()?, b.as_num()?);
-                        Ok(Value::Num(if x > y { x } else { y }))
-                    }
+                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x > y { x } else { y })) }
                     _ => Err("أكبر تحتاج عددين".into()),
                 },
-                "عدد" => match vs.first() {
-                    Some(v) => Ok(Value::Num(v.as_num()?)),
-                    _ => Err("عدد تحتاج قيمة".into()),
-                },
+                "عدد" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?)), _ => Err("عدد تحتاج قيمة".into()) },
                 _ => Err(format!("دالة غير معروفة: {}", name)),
             }
         }
@@ -284,8 +201,7 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                 BinOp::Mul => Ok(Value::Num(l.as_num()? * r.as_num()?)),
                 BinOp::Div => {
                     let b = r.as_num()?;
-                    if b == 0.0 { Err("القسمة على صفر".into()) }
-                    else { Ok(Value::Num(l.as_num()? / b)) }
+                    if b == 0.0 { Err("القسمة على صفر".into()) } else { Ok(Value::Num(l.as_num()? / b)) }
                 }
                 BinOp::Mod => Ok(Value::Num(l.as_num()? % r.as_num()?)),
             }
@@ -306,10 +222,8 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
         Expression::Logical { left, op, right } => {
             let l = eval(left, env)?;
             match op {
-                LogOp::And => if !l.as_bool() { Ok(Value::Bool(false)) }
-                    else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
-                LogOp::Or => if l.as_bool() { Ok(Value::Bool(true)) }
-                    else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
+                LogOp::And => if !l.as_bool() { Ok(Value::Bool(false)) } else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
+                LogOp::Or => if l.as_bool() { Ok(Value::Bool(true)) } else { Ok(Value::Bool(eval(right, env)?.as_bool())) },
             }
         }
         Expression::Not(e) => Ok(Value::Bool(!eval(e, env)?.as_bool())),
@@ -318,54 +232,34 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
 
 fn css_property(name: &str) -> &str {
     match name {
-        "لون" => "color",
-        "خلفية" => "background",
-        "حجم" => "font-size",
-        "حشوة" => "padding",
-        "هامش" => "margin",
-        "استدارة" => "border-radius",
-        "محاذاة" => "text-align",
-        "عرض" => "width",
-        "ارتفاع" => "height",
-        "حد" => "border",
-        "وزن" => "font-weight",
-        "ظل" => "box-shadow",
-        "اتجاه" => "direction",
-        "تحويل" => "text-transform",
+        "لون" => "color", "خلفية" => "background", "حجم" => "font-size",
+        "حشوة" => "padding", "هامش" => "margin", "استدارة" => "border-radius",
+        "محاذاة" => "text-align", "عرض" => "width", "ارتفاع" => "height",
+        "حد" => "border", "وزن" => "font-weight", "ظل" => "box-shadow",
+        "اتجاه" => "direction", "تحويل" => "text-transform",
         "مسافة_بين_الأسطر" => "line-height",
+        "انتقال" => "transition", "حجم_الخط" => "font-size",
+        "أقصى_عرض" => "max-width", "أدنى_عرض" => "min-width",
+        "أقصى_ارتفاع" => "max-height", "أدنى_ارتفاع" => "min-height",
+        "موضع" => "position", "أعلى" => "top", "أسفل" => "bottom",
+        "يمين_الموضع" => "right", "يسار_الموضع" => "left",
+        "ظل_النص" => "text-shadow", "شفافية" => "opacity",
         _ => name,
     }
 }
 
 fn css_value(val: &str) -> String {
     match val {
-        "أحمر" => "red".into(),
-        "أزرق" => "blue".into(),
-        "أخضر" => "green".into(),
-        "أبيض" => "white".into(),
-        "أسود" => "black".into(),
-        "رمادي" => "gray".into(),
-        "أصفر" => "yellow".into(),
-        "برتقالي" => "orange".into(),
-        "بنفسجي" => "purple".into(),
-        "وردي" => "pink".into(),
-        "بني" => "brown".into(),
-        "ذهبي" => "gold".into(),
-        "فضي" => "silver".into(),
-        "سماوي" => "skyblue".into(),
-        "ليموني" => "lime".into(),
-        "أرجواني" => "magenta".into(),
-        "نيلي" => "navy".into(),
-        "كريمي" => "beige".into(),
-        "شفاف" => "transparent".into(),
-        "تركوازي" => "turquoise".into(),
-        "مرجاني" => "coral".into(),
-        "وسط" => "center".into(),
-        "يمين" => "right".into(),
-        "يسار" => "left".into(),
-        "عريض" => "bold".into(),
-        "ضعيف" => "lighter".into(),
-        "مائل" => "italic".into(),
+        "أحمر" => "red".into(), "أزرق" => "blue".into(), "أخضر" => "green".into(),
+        "أبيض" => "white".into(), "أسود" => "black".into(), "رمادي" => "gray".into(),
+        "أصفر" => "yellow".into(), "برتقالي" => "orange".into(), "بنفسجي" => "purple".into(),
+        "وردي" => "pink".into(), "بني" => "brown".into(), "ذهبي" => "gold".into(),
+        "فضي" => "silver".into(), "سماوي" => "skyblue".into(), "ليموني" => "lime".into(),
+        "أرجواني" => "magenta".into(), "نيلي" => "navy".into(), "كريمي" => "beige".into(),
+        "شفاف" => "transparent".into(), "تركوازي" => "turquoise".into(), "مرجاني" => "coral".into(),
+        "وسط" => "center".into(), "يمين" => "right".into(), "يسار" => "left".into(),
+        "عريض" => "bold".into(), "ضعيف" => "lighter".into(), "مائل" => "italic".into(),
+        "سريع" => "0.2s".into(), "بطيء" => "0.8s".into(),
         _ => if val.parse::<f64>().is_ok() { format!("{}px", val) } else { val.to_string() },
     }
 }
@@ -380,26 +274,16 @@ struct Codegen {
 
 impl Codegen {
     fn new() -> Self {
-        Self {
-            counter: 0,
-            events_js: String::new(),
-            updates_js: String::new(),
-            components: HashMap::new(),
-            depth: 0,
-        }
+        Self { counter: 0, events_js: String::new(), updates_js: String::new(), components: HashMap::new(), depth: 0 }
     }
-
-    fn next_id(&mut self) -> String {
-        self.counter += 1;
-        format!("r{}", self.counter)
-    }
+    fn next_id(&mut self) -> String { self.counter += 1; format!("r{}", self.counter) }
 
     fn is_reactive(&self, expr: &Expression, state_vars: &[String]) -> bool {
         match expr {
             Expression::Identifier(n) => state_vars.contains(n),
-            Expression::Binary { left, right, .. }
-            | Expression::Comparison { left, right, .. }
-            | Expression::Logical { left, right, .. } => {
+            Expression::Binary { left, right, .. } |
+            Expression::Comparison { left, right, .. } |
+            Expression::Logical { left, right, .. } => {
                 self.is_reactive(left, state_vars) || self.is_reactive(right, state_vars)
             }
             Expression::Not(e) => self.is_reactive(e, state_vars),
@@ -421,24 +305,18 @@ impl Codegen {
                 format!("[{}]", list.join(", "))
             }
             Expression::Call { name, args } => {
-                if name == "اقرأ_مدخل" && args.is_empty() {
-                    return "this.value".to_string();
-                }
+                if name == "اقرأ_مدخل" && args.is_empty() { return "this.value".to_string(); }
                 let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
                 format!("{}({})", name, a.join(", "))
             }
             Expression::Binary { left, op, right } => {
-                let op_str = match op {
-                    BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*",
-                    BinOp::Div => "/", BinOp::Mod => "%",
-                };
+                let op_str = match op { BinOp::Add => "+", BinOp::Sub => "-", BinOp::Mul => "*", BinOp::Div => "/", BinOp::Mod => "%" };
                 format!("({} {} {})", self.expr_to_js(left), op_str, self.expr_to_js(right))
             }
             Expression::Comparison { left, op, right } => {
                 let op_str = match op {
                     CmpOp::Eq => "===", CmpOp::Ne => "!==",
-                    CmpOp::Gt => ">", CmpOp::Lt => "<",
-                    CmpOp::Ge => ">=", CmpOp::Le => "<=",
+                    CmpOp::Gt => ">", CmpOp::Lt => "<", CmpOp::Ge => ">=", CmpOp::Le => "<=",
                 };
                 format!("({} {} {})", self.expr_to_js(left), op_str, self.expr_to_js(right))
             }
@@ -474,11 +352,8 @@ impl Codegen {
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
                 let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
-                if name == "اطبع" {
-                    Ok(format!("{}console.log({});\n", indent, a.join(", ")))
-                } else {
-                    Ok(format!("{}{}({});\n", indent, name, a.join(", ")))
-                }
+                if name == "اطبع" { Ok(format!("{}console.log({});\n", indent, a.join(", "))) }
+                else { Ok(format!("{}{}({});\n", indent, name, a.join(", "))) }
             }
             Statement::ForEach { var, iterable, body, .. } => {
                 let mut s = format!("{}for (let {} of {}) {{\n", indent, var, self.expr_to_js(iterable));
@@ -490,38 +365,23 @@ impl Codegen {
         }
     }
 
-    fn gen_html(
-        &mut self,
-        stmt: &Statement,
-        env: &mut HashMap<String, Value>,
-        state_vars: &[String],
-    ) -> Result<String, String> {
+    fn gen_html(&mut self, stmt: &Statement, env: &mut HashMap<String, Value>, state_vars: &[String]) -> Result<String, String> {
         match stmt {
             Statement::HtmlElement { tag, content, attrs, children, events, .. } => {
                 let mut attr_str = String::new();
                 let mut existing_id: Option<String> = None;
                 for (k, v) in attrs {
                     let val = eval(v, env)?.to_display();
-                    if k == "id" {
-                        existing_id = Some(val.clone());
-                    }
+                    if k == "id" { existing_id = Some(val.clone()); }
                     attr_str.push_str(&format!(" {}=\"{}\"", k, val));
                 }
 
-                let needs_reactive = content.as_ref()
-                    .map(|c| self.is_reactive(c, state_vars))
-                    .unwrap_or(false);
+                let needs_reactive = content.as_ref().map(|c| self.is_reactive(c, state_vars)).unwrap_or(false);
                 let needs_id = needs_reactive || !events.is_empty();
-                let id = if needs_id && existing_id.is_none() {
-                    Some(self.next_id())
-                } else {
-                    existing_id.clone()
-                };
+                let id = if needs_id && existing_id.is_none() { Some(self.next_id()) } else { existing_id.clone() };
 
                 if existing_id.is_none() {
-                    if let Some(ref i) = id {
-                        attr_str.push_str(&format!(" id=\"{}\"", i));
-                    }
+                    if let Some(ref i) = id { attr_str.push_str(&format!(" id=\"{}\"", i)); }
                 }
 
                 let (open, close, self_closing) = match tag.as_str() {
@@ -529,9 +389,8 @@ impl Codegen {
                     _ => (format!("<{}{}>", tag, attr_str), format!("</{}>", tag), false),
                 };
 
-                let inner = if self_closing {
-                    String::new()
-                } else if let Some(ref ch) = children {
+                let inner = if self_closing { String::new() }
+                else if let Some(ref ch) = children {
                     let mut s = String::new();
                     for c in ch { s.push_str(&self.gen_html(c, env, state_vars)?); }
                     s
@@ -539,14 +398,11 @@ impl Codegen {
                     if needs_reactive {
                         if let Some(ref i) = id {
                             self.updates_js.push_str(&format!(
-                                "  document.getElementById('{}').textContent = {};\n",
-                                i, self.expr_to_js(c)
+                                "  document.getElementById('{}').textContent = {};\n", i, self.expr_to_js(c)
                             ));
                         }
                         String::new()
-                    } else {
-                        eval(c, env)?.to_display()
-                    }
+                    } else { eval(c, env)?.to_display() }
                 } else { String::new() };
 
                 for ev in events {
@@ -566,13 +422,9 @@ impl Codegen {
                 let needs_reactive = self.is_reactive(condition, state_vars);
                 if needs_reactive {
                     let mut then_html = String::new();
-                    for st in then_branch {
-                        then_html.push_str(&self.gen_html(st, env, state_vars)?);
-                    }
+                    for st in then_branch { then_html.push_str(&self.gen_html(st, env, state_vars)?); }
                     let mut else_html = String::new();
-                    for st in else_branch {
-                        else_html.push_str(&self.gen_html(st, env, state_vars)?);
-                    }
+                    for st in else_branch { else_html.push_str(&self.gen_html(st, env, state_vars)?); }
                     let id = self.next_id();
                     let cond_js = self.expr_to_js(condition);
                     let then_escaped = then_html.replace('\\', "\\\\").replace('`', "\\`").replace("${", "\\${");
@@ -586,9 +438,7 @@ impl Codegen {
                     let cond_val = eval(condition, env)?.as_bool();
                     let branch = if cond_val { then_branch } else { else_branch };
                     let mut s = String::new();
-                    for st in branch {
-                        s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
-                    }
+                    for st in branch { s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default()); }
                     Ok(s)
                 }
             }
@@ -600,27 +450,18 @@ impl Codegen {
                     let old_env = env.clone();
                     for item in items {
                         env.insert(var.clone(), item);
-                        for st in body {
-                            s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
-                        }
+                        for st in body { s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default()); }
                     }
                     *env = old_env;
                     Ok(s)
                 } else { Ok(String::new()) }
             }
 
-            // ===== استدعاء مكون =====
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
-
-                // هل هذا مكون؟
                 let component = self.components.get(name).cloned();
                 if let Some((params, body)) = component {
-                    if self.depth > 20 {
-                        return Err("استدعاء متكرر لا نهائي للمكونات".into());
-                    }
-
-                    // اربط الوسائط بالمعاملات في env جديد
+                    if self.depth > 20 { return Err("استدعاء متكرر لا نهائي".into()); }
                     let mut new_env: HashMap<String, Value> = HashMap::new();
                     for (i, p) in params.iter().enumerate() {
                         if let Some(arg) = args.get(i) {
@@ -628,21 +469,13 @@ impl Codegen {
                             new_env.insert(p.clone(), v);
                         }
                     }
-
-                    // ولّد HTML للجسم
                     self.depth += 1;
                     let mut html = String::new();
-                    for stmt in &body {
-                        html.push_str(&self.gen_html(stmt, &mut new_env, state_vars)?);
-                    }
+                    for stmt in &body { html.push_str(&self.gen_html(stmt, &mut new_env, state_vars)?); }
                     self.depth -= 1;
                     Ok(html)
-                } else {
-                    // دالة عادية - نتركها لتُعالج كـ no-op في HTML
-                    Ok(String::new())
-                }
+                } else { Ok(String::new()) }
             }
-
             _ => Ok(String::new()),
         }
     }
@@ -667,12 +500,7 @@ fn main() {
         return;
     }
 
-    let input_path: PathBuf = if args.len() > 1 {
-        PathBuf::from(&args[1])
-    } else {
-        PathBuf::from("index.rino")
-    };
-
+    let input_path: PathBuf = if args.len() > 1 { PathBuf::from(&args[1]) } else { PathBuf::from("index.rino") };
     if !input_path.exists() {
         eprintln!("❌ الملف غير موجود: {}", input_path.display());
         eprintln!();
@@ -682,15 +510,8 @@ fn main() {
         std::process::exit(1);
     }
 
-    let input_dir = input_path.parent()
-        .map(|p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() })
-        .unwrap_or_else(|| PathBuf::from("."));
-
-    let base_name = input_path
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("index")
-        .to_string();
+    let input_dir = input_path.parent().map(|p| if p.as_os_str().is_empty() { PathBuf::from(".") } else { p.to_path_buf() }).unwrap_or_else(|| PathBuf::from("."));
+    let base_name = input_path.file_stem().and_then(|s| s.to_str()).unwrap_or("index").to_string();
 
     let output_html_path = input_dir.join(format!("{}.html", base_name));
     let output_css_path  = input_dir.join(format!("{}.css", base_name));
@@ -708,9 +529,7 @@ fn main() {
     };
 
     let mut visited = HashSet::new();
-    if let Ok(canonical) = input_path.canonicalize() {
-        visited.insert(canonical);
-    }
+    if let Ok(canonical) = input_path.canonicalize() { visited.insert(canonical); }
     let source = match process_imports(&source, &input_dir, &mut visited, 0) {
         Ok(s) => s,
         Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
@@ -752,7 +571,6 @@ fn main() {
         }
     }
 
-    // ========== جمع المكونات ==========
     let mut cg = Codegen::new();
     for c in &program.components {
         if let Statement::ComponentDef { name, params, body, .. } = c {
@@ -765,13 +583,30 @@ fn main() {
         body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
     }
 
+    // ========== CSS مع كلاسات ومعرفات وعند_المرور ==========
     let mut css = String::new();
     for r in &program.styles {
-        css.push_str(&format!("{} {{\n", r.selector));
+        let selector_prefix = match r.selector_kind {
+            SelectorKind::Tag => "",
+            SelectorKind::Class => ".",
+            SelectorKind::Id => "#",
+        };
+
+        // القاعدة الأساسية
+        css.push_str(&format!("{}{} {{\n", selector_prefix, r.selector));
         for (p, v) in &r.properties {
             css.push_str(&format!("  {}: {};\n", css_property(p), css_value(v)));
         }
         css.push_str("}\n");
+
+        // عند_المرور
+        if !r.hover_properties.is_empty() {
+            css.push_str(&format!("{}{}:hover {{\n", selector_prefix, r.selector));
+            for (p, v) in &r.hover_properties {
+                css.push_str(&format!("  {}: {};\n", css_property(p), css_value(v)));
+            }
+            css.push_str("}\n");
+        }
     }
 
     let mut state_init = String::new();
@@ -831,10 +666,7 @@ function updateAll() {{
 
 updateAll();
 "#,
-            state_init,
-            events = cg.events_js,
-            updates = cg.updates_js,
-            helpers = helpers
+            state_init, events = cg.events_js, updates = cg.updates_js, helpers = helpers
         )
     } else {
         format!("{}{}", helpers, cg.events_js)
@@ -852,10 +684,7 @@ updateAll();
 </body>
 </html>
 "#,
-        title = title,
-        css_file = css_filename,
-        js_file = js_filename,
-        body = body_html
+        title = title, css_file = css_filename, js_file = js_filename, body = body_html
     );
 
     let css_content = css;

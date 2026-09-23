@@ -15,7 +15,16 @@ pub struct Program {
 #[derive(Debug, Clone)]
 pub struct StyleRule {
     pub selector: String,
+    pub selector_kind: SelectorKind,
     pub properties: Vec<(String, String)>,
+    pub hover_properties: Vec<(String, String)>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum SelectorKind {
+    Tag,    // h1, p, button
+    Class,  // .بطاقة
+    Id,     // #رئيسي
 }
 
 #[derive(Debug, Clone)]

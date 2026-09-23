@@ -9,12 +9,19 @@ pub enum TokenKind {
     If, Else, For, In, And, Or, Not,
     True, False, Null,
     Settings, Correction,
-    Component,  // مكون
+    Component,
 
     // عناصر واجهة
     H1, P, Button, Image, Link, Input, List, ListItem,
     Div, Section, Header, Footer,
     Bold, Italic, Break,
+
+    // CSS selectors
+    Dot,      // .
+    Hash,     // #
+
+    // حالات CSS
+    OnHover,  // عند_المرور
 
     // دوال مدمجة
     Print,
@@ -70,6 +77,7 @@ pub fn keyword_to_token(word: &str) -> Option<TokenKind> {
         "إعدادات" => Settings,
         "تصحيح" => Correction,
         "مكون" => Component,
+        "عند_المرور" => OnHover,
         "عنوان" => H1,
         "فقرة" => P,
         "زر" => Button,
