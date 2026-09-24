@@ -41,6 +41,7 @@ impl Parser {
         let mut state = Vec::new();
         let mut functions = Vec::new();
         let mut components = Vec::new();
+        let mut tests = Vec::new();
         let mut body = Vec::new();
         let mut top_level = Vec::new();
 
@@ -75,6 +76,7 @@ impl Parser {
                     self.expect(TokenKind::RBrace)?;
                 }
                 TokenKind::Component => components.push(self.parse_component()?),
+                TokenKind::Test => tests.push(self.parse_test()?),
                 _ => top_level.push(self.parse_statement()?),
             }
         }
@@ -83,7 +85,10 @@ impl Parser {
             body = top_level;
         }
 
-        Ok(Program { page_title, styles, state, functions, components, body, top_level: Vec::new() })
+        Ok(Program {
+            page_title, styles, state, functions, components, tests,
+            body, top_level: Vec::new(),
+        })
     }
 
     fn parse_page(&mut self) -> Result<Expression, String> {
@@ -92,6 +97,16 @@ impl Parser {
         let e = self.parse_expression()?;
         self.expect(TokenKind::RParen)?;
         Ok(e)
+    }
+
+    fn parse_test(&mut self) -> Result<Statement, String> {
+        let tok = self.advance();
+        let name = match self.advance().kind {
+            TokenKind::String(s) => s,
+            other => return Err(format!("متوقع اسم نصي للاختبار، وجد {:?}", other)),
+        };
+        let body = self.parse_block()?;
+        Ok(Statement::Test { name, body, line: tok.line })
     }
 
     fn parse_component(&mut self) -> Result<Statement, String> {
@@ -289,6 +304,34 @@ impl Parser {
                 }
                 self.expect(TokenKind::RParen)?;
                 Ok(Statement::Call { name: "اطبع".into(), args, line: tok.line })
+            }
+            TokenKind::Expect => {
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+                let mut args = Vec::new();
+                if *self.kind() != TokenKind::RParen {
+                    args.push(self.parse_expression()?);
+                    while *self.kind() == TokenKind::Comma {
+                        self.advance();
+                        args.push(self.parse_expression()?);
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                Ok(Statement::Call { name: "توقع".into(), args, line: tok.line })
+            }
+            TokenKind::ExpectEquals => {
+                self.advance();
+                self.expect(TokenKind::LParen)?;
+                let mut args = Vec::new();
+                if *self.kind() != TokenKind::RParen {
+                    args.push(self.parse_expression()?);
+                    while *self.kind() == TokenKind::Comma {
+                        self.advance();
+                        args.push(self.parse_expression()?);
+                    }
+                }
+                self.expect(TokenKind::RParen)?;
+                Ok(Statement::Call { name: "توقع_يساوي".into(), args, line: tok.line })
             }
             TokenKind::And | TokenKind::Or => {
                 self.advance();

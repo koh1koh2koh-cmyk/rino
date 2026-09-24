@@ -10,6 +10,7 @@ pub enum TokenKind {
     Settings, Correction,
     Component,
     Try, Catch, From, To, Step,
+    Test, Expect, ExpectEquals,
 
     H1, P, Button, Image, Link, Input, List, ListItem,
     Div, Section, Header, Footer,
@@ -65,6 +66,9 @@ pub fn keyword_to_token(word: &str) -> Option<TokenKind> {
         "خطوة" => Step,
         "حاول" => Try,
         "أمسك" => Catch,
+        "اختبر" => Test,
+        "توقع" => Expect,
+        "توقع_يساوي" => ExpectEquals,
         "و" => And,
         "أو" => Or,
         "ليس" => Not,

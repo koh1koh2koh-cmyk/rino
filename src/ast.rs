@@ -8,6 +8,7 @@ pub struct Program {
     pub state: Vec<Statement>,
     pub functions: Vec<Statement>,
     pub components: Vec<Statement>,
+    pub tests: Vec<Statement>,
     pub body: Vec<Statement>,
     pub top_level: Vec<Statement>,
 }
@@ -34,6 +35,7 @@ pub enum Statement {
     Assignment { name: String, value: Expression, line: usize },
     Function { name: String, params: Vec<String>, body: Vec<Statement>, line: usize },
     ComponentDef { name: String, params: Vec<String>, body: Vec<Statement>, line: usize },
+    Test { name: String, body: Vec<Statement>, line: usize },
     Return { value: Option<Expression>, line: usize },
     If { condition: Expression, then_branch: Vec<Statement>, else_branch: Vec<Statement>, line: usize },
     ForEach { var: String, iterable: Expression, body: Vec<Statement>, line: usize },

@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 1.3 — عناصر HTML جديدة
+//! الإصدار 1.4 — بيئة اختبار
 
 mod ast;
 mod correction;
@@ -378,6 +378,182 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
     }
 }
 
+/// تقييم مع دعم الدوال المُعرَّفة من المستخدم (للاختبارات)
+fn eval_with_funcs(
+    expr: &Expression,
+    env: &HashMap<String, Value>,
+    funcs: &HashMap<String, (Vec<String>, Vec<Statement>)>,
+    depth: usize,
+) -> Result<Value, String> {
+    if depth > 50 {
+        return Err("عمق التقييم كبير جدًا".into());
+    }
+
+    match expr {
+        Expression::Call { name, args } => {
+            // 1) هل هي دالة مُعرَّفة من المستخدم؟
+            if let Some((params, body)) = funcs.get(name) {
+                let mut new_env: HashMap<String, Value> = HashMap::new();
+                for (i, p) in params.iter().enumerate() {
+                    if let Some(arg) = args.get(i) {
+                        let v = eval_with_funcs(arg, env, funcs, depth + 1)?;
+                        new_env.insert(p.clone(), v);
+                    }
+                }
+                for stmt in body {
+                    if let Statement::Return { value: Some(v), .. } = stmt {
+                        return eval_with_funcs(v, &new_env, funcs, depth + 1);
+                    }
+                    if let Statement::Let { name, value, .. } = stmt {
+                        let v = eval_with_funcs(value, &new_env, funcs, depth + 1)?;
+                        new_env.insert(name.clone(), v);
+                    }
+                }
+                return Ok(Value::Null);
+            }
+            // 2) دالة مدمجة
+            eval(expr, env)
+        }
+        Expression::Binary { left, op, right } => {
+            let l = eval_with_funcs(left, env, funcs, depth + 1)?;
+            let r = eval_with_funcs(right, env, funcs, depth + 1)?;
+            match op {
+                BinOp::Add => match (&l, &r) {
+                    (Value::Num(a), Value::Num(b)) => Ok(Value::Num(a + b)),
+                    _ => Ok(Value::Str(l.to_display() + &r.to_display())),
+                },
+                BinOp::Sub => Ok(Value::Num(l.as_num()? - r.as_num()?)),
+                BinOp::Mul => Ok(Value::Num(l.as_num()? * r.as_num()?)),
+                BinOp::Div => {
+                    let b = r.as_num()?;
+                    if b == 0.0 { Err("القسمة على صفر".into()) } else { Ok(Value::Num(l.as_num()? / b)) }
+                }
+                BinOp::Mod => Ok(Value::Num(l.as_num()? % r.as_num()?)),
+            }
+        }
+        Expression::Comparison { left, op, right } => {
+            let l = eval_with_funcs(left, env, funcs, depth + 1)?;
+            let r = eval_with_funcs(right, env, funcs, depth + 1)?;
+            let res = match op {
+                CmpOp::Eq => l.to_display() == r.to_display(),
+                CmpOp::Ne => l.to_display() != r.to_display(),
+                CmpOp::Gt => l.as_num()? > r.as_num()?,
+                CmpOp::Lt => l.as_num()? < r.as_num()?,
+                CmpOp::Ge => l.as_num()? >= r.as_num()?,
+                CmpOp::Le => l.as_num()? <= r.as_num()?,
+            };
+            Ok(Value::Bool(res))
+        }
+        Expression::Logical { left, op, right } => {
+            let l = eval_with_funcs(left, env, funcs, depth + 1)?;
+            match op {
+                LogOp::And => if !l.as_bool() { Ok(Value::Bool(false)) }
+                    else { Ok(Value::Bool(eval_with_funcs(right, env, funcs, depth + 1)?.as_bool())) },
+                LogOp::Or => if l.as_bool() { Ok(Value::Bool(true)) }
+                    else { Ok(Value::Bool(eval_with_funcs(right, env, funcs, depth + 1)?.as_bool())) },
+            }
+        }
+        Expression::Not(e) => {
+            Ok(Value::Bool(!eval_with_funcs(e, env, funcs, depth + 1)?.as_bool()))
+        }
+        Expression::List(items) => {
+            let mut vs = Vec::new();
+            for i in items { vs.push(eval_with_funcs(i, env, funcs, depth + 1)?); }
+            Ok(Value::List(vs))
+        }
+        _ => eval(expr, env),
+    }
+}
+
+/// تشغيل اختبارات Rino
+fn run_tests(program: &Program) -> i32 {
+    if program.tests.is_empty() {
+        println!("⚠️  لا توجد اختبارات في هذا الملف");
+        return 0;
+    }
+
+    let mut funcs: HashMap<String, (Vec<String>, Vec<Statement>)> = HashMap::new();
+    for f in &program.functions {
+        if let Statement::Function { name, params, body, .. } = f {
+            funcs.insert(name.clone(), (params.clone(), body.clone()));
+        }
+    }
+
+    println!();
+    println!("🧪 تشغيل {} اختبار...", program.tests.len());
+    println!("─────────────────────────────────────");
+
+    let mut passed = 0;
+    let mut failed = 0;
+
+    for test in &program.tests {
+        if let Statement::Test { name, body, .. } = test {
+            let mut env: HashMap<String, Value> = HashMap::new();
+            let mut errors: Vec<String> = Vec::new();
+            let mut assertion_num = 0;
+
+            for stmt in body {
+                match stmt {
+                    Statement::Call { name: cname, args, .. } if cname == "توقع" => {
+                        assertion_num += 1;
+                        if let Some(arg) = args.first() {
+                            match eval_with_funcs(arg, &env, &funcs, 0) {
+                                Ok(v) => {
+                                    if !v.as_bool() {
+                                        errors.push(format!("توقع #{} فشل: القيمة = {}", assertion_num, v.to_display()));
+                                    }
+                                }
+                                Err(e) => errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e)),
+                            }
+                        }
+                    }
+                    Statement::Call { name: cname, args, .. } if cname == "توقع_يساوي" => {
+                        assertion_num += 1;
+                        if args.len() >= 2 {
+                            let a = eval_with_funcs(&args[0], &env, &funcs, 0);
+                            let b = eval_with_funcs(&args[1], &env, &funcs, 0);
+                            match (a, b) {
+                                (Ok(va), Ok(vb)) => {
+                                    let da = va.to_display();
+                                    let db = vb.to_display();
+                                    if da != db {
+                                        errors.push(format!("توقع #{}: متوقع [{}] لكن وجد [{}]", assertion_num, db, da));
+                                    }
+                                }
+                                (Err(e), _) | (_, Err(e)) => {
+                                    errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e));
+                                }
+                            }
+                        }
+                    }
+                    Statement::Let { name, value, .. } => {
+                        if let Ok(v) = eval_with_funcs(value, &env, &funcs, 0) {
+                            env.insert(name.clone(), v);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+
+            if errors.is_empty() {
+                println!("✅ {}", name);
+                passed += 1;
+            } else {
+                println!("❌ {}", name);
+                for e in &errors {
+                    println!("   • {}", e);
+                }
+                failed += 1;
+            }
+        }
+    }
+
+    println!("─────────────────────────────────────");
+    println!("📊 النتيجة: {} نجح | {} فشل | {} الإجمالي", passed, failed, passed + failed);
+
+    if failed > 0 { 1 } else { 0 }
+}
+
 fn css_property(name: &str) -> &str {
     match name {
         "لون" => "color", "خلفية" => "background", "حجم" => "font-size",
@@ -592,7 +768,6 @@ impl Codegen {
                     attr_str.push_str(&format!(" {}=\"{}\"", k, val));
                 }
 
-                // إضافة controls للفيديو والموسيقى
                 if tag == "video" || tag == "audio" {
                     attr_str.push_str(" controls");
                 }
@@ -782,6 +957,7 @@ impl Codegen {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
+    // ===== أمر التنسيق =====
     if args.len() > 2 && args[1] == "format" {
         let file_path = PathBuf::from(&args[2]);
         let source = match fs::read_to_string(&file_path) {
@@ -798,6 +974,30 @@ fn main() {
         return;
     }
 
+    // ===== أمر الاختبار =====
+    if args.len() > 1 && args[1] == "test" {
+        let test_file = if args.len() > 2 { &args[2] } else { "index.rino" };
+        let test_path = PathBuf::from(test_file);
+        if !test_path.exists() {
+            eprintln!("❌ الملف غير موجود: {}", test_file);
+            std::process::exit(1);
+        }
+        let src = fs::read_to_string(&test_path).expect("فشل قراءة الملف");
+        let mut v = HashSet::new();
+        if let Ok(c) = test_path.canonicalize() { v.insert(c); }
+        let dir = test_path.parent().unwrap_or(Path::new("."));
+        let src = process_imports(&src, dir, &mut v, 0).expect("فشل معالجة الاستيرادات");
+
+        let mut lx = Lexer::new(&src);
+        let tk = lx.tokenize().expect("خطأ لغوي");
+        let mut pr = Parser::new(tk);
+        let prog = pr.parse().expect("خطأ نحوي");
+
+        let exit_code = run_tests(&prog);
+        std::process::exit(exit_code);
+    }
+
+    // ===== أمر البناء العادي =====
     let input_path: PathBuf = if args.len() > 1 { PathBuf::from(&args[1]) } else { PathBuf::from("index.rino") };
     if !input_path.exists() {
         eprintln!("❌ الملف غير موجود: {}", input_path.display());
@@ -805,6 +1005,7 @@ fn main() {
         eprintln!("الاستخدام:");
         eprintln!("   rino <ملف.rino>         — بناء الملف");
         eprintln!("   rino format <ملف.rino>  — تنسيق الملف");
+        eprintln!("   rino test <ملف.rino>    — تشغيل الاختبارات");
         std::process::exit(1);
     }
 
