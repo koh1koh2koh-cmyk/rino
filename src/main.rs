@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 1.4 — بيئة اختبار
+//! الإصدار 1.5 — مكتبة مكونات جاهزة
 
 mod ast;
 mod correction;
@@ -66,6 +66,124 @@ use parser::Parser;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+/// ============ CSS للمكونات الجاهزة ============
+const BUILTIN_CSS: &str = r#"
+/* ===== مكتبة Rino الجاهزة ===== */
+.rino-btn {
+  background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+  color: #ffffff;
+  padding: 12px 28px;
+  border: none;
+  border-radius: 10px;
+  font-size: 16px;
+  font-weight: bold;
+  cursor: pointer;
+  transition: all 0.3s ease;
+  margin: 6px;
+  font-family: inherit;
+}
+.rino-btn:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 10px 20px rgba(102, 126, 234, 0.4);
+}
+.rino-card {
+  background: #ffffff;
+  border-radius: 14px;
+  padding: 24px;
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.08);
+  margin: 16px auto;
+  max-width: 420px;
+  text-align: center;
+  border: 1px solid #eef0f5;
+  transition: all 0.3s ease;
+}
+.rino-card:hover {
+  transform: translateY(-4px);
+  box-shadow: 0 10px 24px rgba(0, 0, 0, 0.12);
+}
+.rino-card h3 {
+  color: #2d3748;
+  margin: 0 0 12px 0;
+  font-size: 22px;
+}
+.rino-card p {
+  color: #718096;
+  margin: 0 0 16px 0;
+  font-size: 16px;
+  line-height: 1.6;
+}
+.rino-card .rino-price {
+  color: #667eea;
+  font-size: 24px;
+  font-weight: bold;
+}
+.rino-alert {
+  padding: 14px 20px;
+  border-radius: 10px;
+  margin: 12px auto;
+  max-width: 520px;
+  text-align: center;
+  font-size: 16px;
+  font-weight: 500;
+  border-right: 5px solid;
+}
+.rino-success { background: #d4edda; color: #155724; border-color: #28a745; }
+.rino-error   { background: #f8d7da; color: #721c24; border-color: #dc3545; }
+.rino-warning { background: #fff3cd; color: #856404; border-color: #ffc107; }
+.rino-info    { background: #d1ecf1; color: #0c5460; border-color: #17a2b8; }
+.rino-progress {
+  width: 90%;
+  max-width: 500px;
+  height: 24px;
+  background: #e9ecef;
+  border-radius: 12px;
+  margin: 12px auto;
+  overflow: hidden;
+}
+.rino-progress-bar {
+  height: 100%;
+  background: linear-gradient(90deg, #667eea, #764ba2);
+  border-radius: 12px;
+  transition: width 0.4s ease;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: white;
+  font-size: 13px;
+  font-weight: bold;
+}
+.rino-highlight {
+  background: #fff8dc;
+  border-right: 4px solid #ffa500;
+  padding: 14px 20px;
+  margin: 12px auto;
+  max-width: 600px;
+  border-radius: 8px;
+  color: #5a4a00;
+  font-size: 17px;
+  text-align: center;
+}
+.rino-header {
+  background: linear-gradient(135deg, #667eea, #764ba2);
+  color: white;
+  padding: 22px;
+  border-radius: 12px;
+  text-align: center;
+  font-size: 26px;
+  font-weight: bold;
+  margin: 16px auto;
+  max-width: 700px;
+  box-shadow: 0 6px 16px rgba(102, 126, 234, 0.3);
+}
+.rino-divider {
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #667eea, transparent);
+  margin: 24px auto;
+  max-width: 400px;
+  border: none;
+}
+"#;
 
 fn process_imports(source: &str, base_dir: &Path, visited: &mut HashSet<PathBuf>, depth: usize) -> Result<String, String> {
     if depth > 20 { return Err("عدد الاستيرادات المتتالية كبير جدًا".into()); }
@@ -378,7 +496,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
     }
 }
 
-/// تقييم مع دعم الدوال المُعرَّفة من المستخدم (للاختبارات)
 fn eval_with_funcs(
     expr: &Expression,
     env: &HashMap<String, Value>,
@@ -391,7 +508,6 @@ fn eval_with_funcs(
 
     match expr {
         Expression::Call { name, args } => {
-            // 1) هل هي دالة مُعرَّفة من المستخدم؟
             if let Some((params, body)) = funcs.get(name) {
                 let mut new_env: HashMap<String, Value> = HashMap::new();
                 for (i, p) in params.iter().enumerate() {
@@ -411,7 +527,6 @@ fn eval_with_funcs(
                 }
                 return Ok(Value::Null);
             }
-            // 2) دالة مدمجة
             eval(expr, env)
         }
         Expression::Binary { left, op, right } => {
@@ -465,7 +580,6 @@ fn eval_with_funcs(
     }
 }
 
-/// تشغيل اختبارات Rino
 fn run_tests(program: &Program) -> i32 {
     if program.tests.is_empty() {
         println!("⚠️  لا توجد اختبارات في هذا الملف");
@@ -601,6 +715,46 @@ impl Codegen {
         Self { counter: 0, events_js: String::new(), updates_js: String::new(), components: HashMap::new(), depth: 0 }
     }
     fn next_id(&mut self) -> String { self.counter += 1; format!("r{}", self.counter) }
+
+    /// ============ مكتبة المكونات الجاهزة ============
+    fn gen_builtin(&mut self, name: &str, args: &[Expression], env: &HashMap<String, Value>) -> Option<String> {
+        let get_str = |i: usize| -> String {
+            args.get(i).and_then(|a| eval(a, env).ok()).map(|v| v.to_display()).unwrap_or_default()
+        };
+        let get_num = |i: usize| -> f64 {
+            args.get(i).and_then(|a| eval(a, env).ok()).and_then(|v| v.as_num().ok()).unwrap_or(0.0)
+        };
+
+        match name {
+            "زر_جميل" => {
+                Some(format!("<button class=\"rino-btn\">{}</button>", get_str(0)))
+            }
+            "بطاقة" => {
+                let title = get_str(0);
+                let desc = get_str(1);
+                let price = if args.len() > 2 { format!("<div class=\"rino-price\">{}</div>", get_str(2)) } else { String::new() };
+                Some(format!(
+                    "<div class=\"rino-card\"><h3>{}</h3><p>{}</p>{}</div>",
+                    title, desc, price
+                ))
+            }
+            "تنبيه_نجاح" => Some(format!("<div class=\"rino-alert rino-success\">{}</div>", get_str(0))),
+            "تنبيه_خطأ" => Some(format!("<div class=\"rino-alert rino-error\">{}</div>", get_str(0))),
+            "تنبيه_تحذير" => Some(format!("<div class=\"rino-alert rino-warning\">{}</div>", get_str(0))),
+            "تنبيه_معلومة" => Some(format!("<div class=\"rino-alert rino-info\">{}</div>", get_str(0))),
+            "شريط_تقدم" => {
+                let pct = get_num(0).clamp(0.0, 100.0);
+                Some(format!(
+                    "<div class=\"rino-progress\"><div class=\"rino-progress-bar\" style=\"width: {}%\">{:.0}%</div></div>",
+                    pct, pct
+                ))
+            }
+            "فقرة_مهمة" => Some(format!("<div class=\"rino-highlight\">{}</div>", get_str(0))),
+            "رأس_جميل" => Some(format!("<div class=\"rino-header\">{}</div>", get_str(0))),
+            "فاصل_جميل" => Some("<hr class=\"rino-divider\">".to_string()),
+            _ => None,
+        }
+    }
 
     fn is_reactive(&self, expr: &Expression, state_vars: &[String]) -> bool {
         match expr {
@@ -905,6 +1059,12 @@ impl Codegen {
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
 
+                // ===== 1) مكتبة المكونات الجاهزة =====
+                if let Some(html) = self.gen_builtin(name, args, env) {
+                    return Ok(html);
+                }
+
+                // ===== 2) مكونات المستخدم =====
                 let component = self.components.get(name).cloned();
                 if let Some((params, body)) = component {
                     if self.depth > 20 { return Err("استدعاء متكرر لا نهائي".into()); }
@@ -957,7 +1117,6 @@ impl Codegen {
 fn main() {
     let args: Vec<String> = std::env::args().collect();
 
-    // ===== أمر التنسيق =====
     if args.len() > 2 && args[1] == "format" {
         let file_path = PathBuf::from(&args[2]);
         let source = match fs::read_to_string(&file_path) {
@@ -974,7 +1133,6 @@ fn main() {
         return;
     }
 
-    // ===== أمر الاختبار =====
     if args.len() > 1 && args[1] == "test" {
         let test_file = if args.len() > 2 { &args[2] } else { "index.rino" };
         let test_path = PathBuf::from(test_file);
@@ -997,7 +1155,6 @@ fn main() {
         std::process::exit(exit_code);
     }
 
-    // ===== أمر البناء العادي =====
     let input_path: PathBuf = if args.len() > 1 { PathBuf::from(&args[1]) } else { PathBuf::from("index.rino") };
     if !input_path.exists() {
         eprintln!("❌ الملف غير موجود: {}", input_path.display());
@@ -1095,7 +1252,9 @@ fn main() {
         body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
     }
 
-    let mut css = String::new();
+    // CSS — يبدأ بـ BUILTIN_CSS ثم CSS المستخدم
+    let mut css = String::from(BUILTIN_CSS);
+    css.push('\n');
     for r in &program.styles {
         let selector_prefix = match r.selector_kind {
             SelectorKind::Tag => "",
