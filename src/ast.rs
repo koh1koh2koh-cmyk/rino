@@ -37,6 +37,8 @@ pub enum Statement {
     Return { value: Option<Expression>, line: usize },
     If { condition: Expression, then_branch: Vec<Statement>, else_branch: Vec<Statement>, line: usize },
     ForEach { var: String, iterable: Expression, body: Vec<Statement>, line: usize },
+    RangeFor { var: String, start: Expression, end: Expression, step: Option<Expression>, body: Vec<Statement>, line: usize },
+    TryCatch { try_body: Vec<Statement>, catch_var: String, catch_body: Vec<Statement>, line: usize },
     HtmlElement {
         tag: String,
         content: Option<Expression>,

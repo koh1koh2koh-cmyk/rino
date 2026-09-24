@@ -10,6 +10,7 @@ pub enum TokenKind {
     True, False, Null,
     Settings, Correction,
     Component,
+    Try, Catch, From, To, Step,
 
     // عناصر واجهة
     H1, P, Button, Image, Link, Input, List, ListItem,
@@ -17,11 +18,8 @@ pub enum TokenKind {
     Bold, Italic, Break,
 
     // CSS selectors
-    Dot,      // .
-    Hash,     // #
-
-    // حالات CSS
-    OnHover,  // عند_المرور
+    Dot, Hash,
+    OnHover,
 
     // دوال مدمجة
     Print,
@@ -68,6 +66,11 @@ pub fn keyword_to_token(word: &str) -> Option<TokenKind> {
         "وإلا" => Else,
         "لكل" => For,
         "في" => In,
+        "من" => From,
+        "إلى" => To,
+        "خطوة" => Step,
+        "حاول" => Try,
+        "أمسك" => Catch,
         "و" => And,
         "أو" => Or,
         "ليس" => Not,
@@ -88,7 +91,7 @@ pub fn keyword_to_token(word: &str) -> Option<TokenKind> {
         "عنصر_قائمة" => ListItem,
         "قسم" => Div,
         "منطقة" => Section,
-        "رأس" => Header,
+        "ترويسة" => Header,
         "تذييل" => Footer,
         "عريض" => Bold,
         "مائل" => Italic,

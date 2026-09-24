@@ -248,6 +248,7 @@ impl Parser {
             }
             TokenKind::If => self.parse_if(),
             TokenKind::For => self.parse_for(),
+            TokenKind::Try => self.parse_try(),
             TokenKind::H1 => self.parse_html("h1"),
             TokenKind::P => self.parse_html("p"),
             TokenKind::Button => self.parse_html("button"),
@@ -358,11 +359,42 @@ impl Parser {
         let tok = self.advance();
         self.expect(TokenKind::LParen)?;
         let var = self.expect_ident()?;
-        self.expect(TokenKind::In)?;
-        let iterable = self.parse_expression()?;
+
+        // هل هو `لكل (i في قائمة)` أم `لكل (i من a إلى b)`؟
+        if *self.kind() == TokenKind::In {
+            self.advance();
+            let iterable = self.parse_expression()?;
+            self.expect(TokenKind::RParen)?;
+            let body = self.parse_block()?;
+            return Ok(Statement::ForEach { var, iterable, body, line: tok.line });
+        }
+
+        if *self.kind() == TokenKind::From {
+            self.advance();
+            let start = self.parse_expression()?;
+            self.expect(TokenKind::To)?;
+            let end = self.parse_expression()?;
+            let step = if *self.kind() == TokenKind::Step {
+                self.advance();
+                Some(self.parse_expression()?)
+            } else { None };
+            self.expect(TokenKind::RParen)?;
+            let body = self.parse_block()?;
+            return Ok(Statement::RangeFor { var, start, end, step, body, line: tok.line });
+        }
+
+        Err(format!("متوقع 'في' أو 'من' في السطر {}", tok.line))
+    }
+
+    fn parse_try(&mut self) -> Result<Statement, String> {
+        let tok = self.advance();
+        let try_body = self.parse_block()?;
+        self.expect(TokenKind::Catch)?;
+        self.expect(TokenKind::LParen)?;
+        let catch_var = self.expect_ident()?;
         self.expect(TokenKind::RParen)?;
-        let body = self.parse_block()?;
-        Ok(Statement::ForEach { var, iterable, body, line: tok.line })
+        let catch_body = self.parse_block()?;
+        Ok(Statement::TryCatch { try_body, catch_var, catch_body, line: tok.line })
     }
 
     fn parse_html(&mut self, tag: &str) -> Result<Statement, String> {
@@ -506,17 +538,11 @@ impl Parser {
 
     fn parse_primary(&mut self) -> Result<Expression, String> {
         let mut expr = self.parse_atom()?;
-
-        // سلسلة الوصول: `شخص.اسم.أول`
         while *self.kind() == TokenKind::Dot {
             self.advance();
             let prop = self.expect_ident()?;
-            expr = Expression::MemberAccess {
-                object: Box::new(expr),
-                property: prop,
-            };
+            expr = Expression::MemberAccess { object: Box::new(expr), property: prop };
         }
-
         Ok(expr)
     }
 
@@ -560,7 +586,6 @@ impl Parser {
                 self.expect(TokenKind::RBracket)?;
                 Ok(Expression::List(items))
             }
-            // ========== قاموس ==========
             TokenKind::LBrace => {
                 let mut pairs = Vec::new();
                 if *self.kind() != TokenKind::RBrace {

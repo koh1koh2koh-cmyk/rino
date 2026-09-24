@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 1.1 — APIs
+//! الإصدار 1.2 — قوائم + حاول/أمسك + حلقات رقمية
 
 mod ast;
 mod correction;
@@ -186,18 +186,51 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
             }
         }
         Expression::Call { name, args } => {
+            // دوال وقت التشغيل — تُقيَّم كـ null عند البناء
             if name == "اقرأ_محلي" || name == "اقرأ_مدخل" || name == "اجلب" || name == "اجلب_نص" {
                 return Ok(Value::Null);
             }
+
             let mut vs = Vec::new();
             for a in args { vs.push(eval(a, env)?); }
+
             match name.as_str() {
+                // ===== دوال النصوص =====
                 "طول" => match vs.first() {
                     Some(Value::List(l)) => Ok(Value::Num(l.len() as f64)),
                     Some(Value::Str(s)) => Ok(Value::Num(s.chars().count() as f64)),
                     Some(Value::Dict(p)) => Ok(Value::Num(p.len() as f64)),
                     _ => Err("طول تحتاج قائمة أو نصًا أو قاموسًا".into()),
                 },
+                "كبير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())), _ => Err("كبير تحتاج نصًا".into()) },
+                "صغير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())), _ => Err("صغير تحتاج نصًا".into()) },
+                "يحتوي" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::Str(s)), Some(Value::Str(sub))) => Ok(Value::Bool(s.contains(sub.as_str()))),
+                    _ => Err("يحتوي تحتاج نصين".into()),
+                },
+                "استبدل" => match (vs.get(0), vs.get(1), vs.get(2)) {
+                    (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Str(s.replace(a.as_str(), b.as_str()))),
+                    _ => Err("استبدل تحتاج 3 نصوص".into()),
+                },
+
+                // ===== دوال الأرقام =====
+                "جذر" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.sqrt())), _ => Err("جذر تحتاج عددًا".into()) },
+                "قوة" => match (vs.get(0), vs.get(1)) { (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))), _ => Err("قوة تحتاج عددين".into()) },
+                "قوس" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.round())), _ => Err("قوس تحتاج عددًا".into()) },
+                "أرضي" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.floor())), _ => Err("أرضي تحتاج عددًا".into()) },
+                "سقف" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.ceil())), _ => Err("سقف تحتاج عددًا".into()) },
+                "مطلق" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.abs())), _ => Err("مطلق تحتاج عددًا".into()) },
+                "أصغر" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x < y { x } else { y })) }
+                    _ => Err("أصغر تحتاج عددين".into()),
+                },
+                "أكبر" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x > y { x } else { y })) }
+                    _ => Err("أكبر تحتاج عددين".into()),
+                },
+                "عدد" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?)), _ => Err("عدد تحتاج قيمة".into()) },
+
+                // ===== دوال القواميس =====
                 "مفاتيح" => match vs.first() {
                     Some(Value::Dict(p)) => {
                         let keys: Vec<Value> = p.iter().map(|(k, _)| Value::Str(k.clone())).collect();
@@ -218,31 +251,92 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     }
                     _ => Err("يحتوي_مفتاح تحتاج قاموسًا ونصًا".into()),
                 },
-                "كبير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_uppercase())), _ => Err("كبير تحتاج نصًا".into()) },
-                "صغير" => match vs.first() { Some(Value::Str(s)) => Ok(Value::Str(s.to_lowercase())), _ => Err("صغير تحتاج نصًا".into()) },
-                "يحتوي" => match (vs.get(0), vs.get(1)) {
-                    (Some(Value::Str(s)), Some(Value::Str(sub))) => Ok(Value::Bool(s.contains(sub.as_str()))),
-                    _ => Err("يحتوي تحتاج نصين".into()),
+
+                // ===== دوال القوائم =====
+                "أضف" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::List(l)), Some(v)) => {
+                        let mut new_list = l.clone();
+                        new_list.push(v.clone());
+                        Ok(Value::List(new_list))
+                    }
+                    _ => Err("أضف تحتاج قائمة وقيمة".into()),
                 },
-                "استبدل" => match (vs.get(0), vs.get(1), vs.get(2)) {
-                    (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Str(s.replace(a.as_str(), b.as_str()))),
-                    _ => Err("استبدل تحتاج 3 نصوص".into()),
+                "احذف" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::List(l)), Some(v)) => {
+                        let mut new_list = l.clone();
+                        if let Some(pos) = new_list.iter().position(|x| x.to_display() == v.to_display()) {
+                            new_list.remove(pos);
+                        }
+                        Ok(Value::List(new_list))
+                    }
+                    _ => Err("احذف تحتاج قائمة وقيمة".into()),
                 },
-                "جذر" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.sqrt())), _ => Err("جذر تحتاج عددًا".into()) },
-                "قوة" => match (vs.get(0), vs.get(1)) { (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))), _ => Err("قوة تحتاج عددين".into()) },
-                "قوس" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.round())), _ => Err("قوس تحتاج عددًا".into()) },
-                "أرضي" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.floor())), _ => Err("أرضي تحتاج عددًا".into()) },
-                "سقف" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.ceil())), _ => Err("سقف تحتاج عددًا".into()) },
-                "مطلق" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.abs())), _ => Err("مطلق تحتاج عددًا".into()) },
-                "أصغر" => match (vs.get(0), vs.get(1)) {
-                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x < y { x } else { y })) }
-                    _ => Err("أصغر تحتاج عددين".into()),
+                "اعكس" => match vs.first() {
+                    Some(Value::List(l)) => {
+                        let mut new_list = l.clone();
+                        new_list.reverse();
+                        Ok(Value::List(new_list))
+                    }
+                    _ => Err("اعكس تحتاج قائمة".into()),
                 },
-                "أكبر" => match (vs.get(0), vs.get(1)) {
-                    (Some(a), Some(b)) => { let (x, y) = (a.as_num()?, b.as_num()?); Ok(Value::Num(if x > y { x } else { y })) }
-                    _ => Err("أكبر تحتاج عددين".into()),
+                "دمج" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::List(l)), Some(Value::Str(sep))) => {
+                        let parts: Vec<String> = l.iter().map(|v| v.to_display()).collect();
+                        Ok(Value::Str(parts.join(sep)))
+                    }
+                    (Some(Value::List(l)), None) => {
+                        let parts: Vec<String> = l.iter().map(|v| v.to_display()).collect();
+                        Ok(Value::Str(parts.join("")))
+                    }
+                    _ => Err("دمج تحتاج قائمة وفاصلًا".into()),
                 },
-                "عدد" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?)), _ => Err("عدد تحتاج قيمة".into()) },
+                "أول" => match vs.first() {
+                    Some(Value::List(l)) => l.first().cloned().ok_or_else(|| "القائمة فارغة".into()),
+                    _ => Err("أول تحتاج قائمة".into()),
+                },
+                "آخر" => match vs.first() {
+                    Some(Value::List(l)) => l.last().cloned().ok_or_else(|| "القائمة فارغة".into()),
+                    _ => Err("آخر تحتاج قائمة".into()),
+                },
+                "مفهرس" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::List(l)), Some(i)) => {
+                        let idx = i.as_num()? as usize;
+                        l.get(idx).cloned().ok_or_else(|| format!("الفهرس {} خارج الحدود", idx))
+                    }
+                    _ => Err("مفهرس تحتاج قائمة ورقمًا".into()),
+                },
+                "يحتوي_قائمة" => match (vs.get(0), vs.get(1)) {
+                    (Some(Value::List(l)), Some(v)) => {
+                        Ok(Value::Bool(l.iter().any(|x| x.to_display() == v.to_display())))
+                    }
+                    _ => Err("يحتوي_قائمة تحتاج قائمة وقيمة".into()),
+                },
+                "رتب" => match vs.first() {
+                    Some(Value::List(l)) => {
+                        let mut new_list = l.clone();
+                        new_list.sort_by(|a, b| {
+                            match (a, b) {
+                                (Value::Num(x), Value::Num(y)) => x.partial_cmp(y).unwrap_or(std::cmp::Ordering::Equal),
+                                _ => a.to_display().cmp(&b.to_display()),
+                            }
+                        });
+                        Ok(Value::List(new_list))
+                    }
+                    _ => Err("رتب تحتاج قائمة".into()),
+                },
+                "مدى" => match (vs.get(0), vs.get(1)) {
+                    (Some(a), Some(b)) => {
+                        let start = a.as_num()? as i64;
+                        let end = b.as_num()? as i64;
+                        let mut items = Vec::new();
+                        for i in start..=end {
+                            items.push(Value::Num(i as f64));
+                        }
+                        Ok(Value::List(items))
+                    }
+                    _ => Err("مدى تحتاج رقمين".into()),
+                },
+
                 "احفظ" => Ok(Value::Null),
                 _ => Err(format!("دالة غير معروفة: {}", name)),
             }
@@ -296,7 +390,7 @@ fn css_property(name: &str) -> &str {
         "حد" => "border", "وزن" => "font-weight", "ظل" => "box-shadow",
         "اتجاه" => "direction", "تحويل" => "text-transform",
         "مسافة_بين_الأسطر" => "line-height",
-        "انتقال" => "transition", "حجم_الخط" => "font-size",
+        "انتقال" => "transition",
         "أقصى_عرض" => "max-width", "أدنى_عرض" => "min-width",
         "أقصى_ارتفاع" => "max-height", "أدنى_ارتفاع" => "min-height",
         "موضع" => "position", "أعلى" => "top", "أسفل" => "bottom",
@@ -421,10 +515,18 @@ impl Codegen {
                 s.push('\n');
                 Ok(s)
             }
+            Statement::TryCatch { try_body, catch_var, catch_body, .. } => {
+                let mut s = format!("{}try {{\n", indent);
+                for st in try_body { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                s.push_str(&format!("{}}} catch ({}) {{\n", indent, catch_var));
+                for st in catch_body { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                s.push_str(&format!("{}}}\n", indent));
+                Ok(s)
+            }
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
                 if name == "اجلب" || name == "اجلب_نص" {
-                    return Ok(self.gen_fetch_call(name, args, "  "));
+                    return Ok(self.gen_fetch_call(name, args, indent));
                 }
                 let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
                 if name == "اطبع" { Ok(format!("{}console.log({});\n", indent, a.join(", "))) }
@@ -436,30 +538,32 @@ impl Codegen {
                 s.push_str(&format!("{}}}\n", indent));
                 Ok(s)
             }
+            Statement::RangeFor { var, start, end, step, body, .. } => {
+                let start_js = self.expr_to_js(start);
+                let end_js = self.expr_to_js(end);
+                let step_js = step.as_ref().map(|e| self.expr_to_js(e)).unwrap_or_else(|| "1".to_string());
+                let mut s = format!("{}for (let {} = {}; {} <= {}; {} += {}) {{\n", indent, var, start_js, var, end_js, var, step_js);
+                for st in body { s.push_str(&self.stmt_to_js(st, &format!("{}  ", indent))?); }
+                s.push_str(&format!("{}}}\n", indent));
+                Ok(s)
+            }
             _ => Ok(String::new()),
         }
     }
 
-    /// توليد JS لدالة اجلب
     fn gen_fetch_call(&self, name: &str, args: &[Expression], indent: &str) -> String {
-        if args.len() < 2 {
-            return String::new();
-        }
+        if args.len() < 2 { return String::new(); }
         let url_js = self.expr_to_js(&args[0]);
         let var_name = match &args[1] {
             Expression::String(s) => s.clone(),
             _ => return String::new(),
         };
-
-        // الوسيط الثالث الاختياري: اسم الحقل
         let field_name = if args.len() >= 3 {
             match &args[2] {
                 Expression::String(s) => Some(s.clone()),
                 _ => None,
             }
-        } else {
-            None
-        };
+        } else { None };
 
         if name == "اجلب" {
             if let Some(field) = field_name {
@@ -571,6 +675,57 @@ impl Codegen {
                     *env = old_env;
                     Ok(s)
                 } else { Ok(String::new()) }
+            }
+
+            // ===== حلقة رقمية: نُفرّغها عند البناء =====
+            Statement::RangeFor { var, start, end, step, body, .. } => {
+                let start_val = eval(start, env)?.as_num()? as i64;
+                let end_val = eval(end, env)?.as_num()? as i64;
+                let step_val = if let Some(s) = step {
+                    let sv = eval(s, env)?.as_num()? as i64;
+                    if sv == 0 { 1 } else { sv.abs() }
+                } else { 1 };
+
+                let mut s = String::new();
+                let old_env = env.clone();
+                let mut i = start_val;
+                while (step_val > 0 && i <= end_val) || (step_val < 0 && i >= end_val) {
+                    env.insert(var.clone(), Value::Num(i as f64));
+                    for st in body {
+                        s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
+                    }
+                    i += step_val;
+                }
+                *env = old_env;
+                Ok(s)
+            }
+
+            Statement::TryCatch { try_body, catch_var, catch_body, .. } => {
+                // في HTML، نحاول تنفيذ try_body، وإذا فشل، نُنفّذ catch_body
+                let mut s = String::new();
+                let mut error_occurred = false;
+
+                for st in try_body {
+                    match self.gen_html(st, env, state_vars) {
+                        Ok(html) => s.push_str(&html),
+                        Err(_) => {
+                            error_occurred = true;
+                            break;
+                        }
+                    }
+                }
+
+                if error_occurred {
+                    s.clear();
+                    let old_env = env.clone();
+                    env.insert(catch_var.clone(), Value::Str("خطأ".into()));
+                    for st in catch_body {
+                        s.push_str(&self.gen_html(st, env, state_vars).unwrap_or_default());
+                    }
+                    *env = old_env;
+                }
+
+                Ok(s)
             }
 
             Statement::Call { name, args, .. } => {
@@ -816,6 +971,30 @@ function اقرأ_محلي(مفتاح) {
   } catch (e) {
     return null;
   }
+}
+function أضف(قائمة, قيمة) {
+  const l = قائمة.slice();
+  l.push(قيمة);
+  return l;
+}
+function احذف(قائمة, قيمة) {
+  const l = قائمة.slice();
+  const idx = l.indexOf(قيمة);
+  if (idx >= 0) l.splice(idx, 1);
+  return l;
+}
+function اعكس(قائمة) { return قائمة.slice().reverse(); }
+function دمج(قائمة, فاصل) { return قائمة.join(فاصل === undefined ? "" : فاصل); }
+function أول(قائمة) { return قائمة[0]; }
+function آخر(قائمة) { return قائمة[قائمة.length - 1]; }
+function مفهرس(قائمة, فهرس) { return قائمة[فهرس]; }
+function يحتوي_قائمة(قائمة, قيمة) { return قائمة.indexOf(قيمة) >= 0; }
+function رتب(قائمة) { return قائمة.slice().sort((a, b) => (typeof a === "number" && typeof b === "number") ? a - b : String(a).localeCompare(String(b), "ar")); }
+function مدى(من, إلى) {
+  const arr = [];
+  if (من <= إلى) { for (let i = من; i <= إلى; i++) arr.push(i); }
+  else { for (let i = من; i >= إلى; i--) arr.push(i); }
+  return arr;
 }
 "#;
 
