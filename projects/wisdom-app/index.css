@@ -1,0 +1,29 @@
+.عنوان_رئيسي {
+  text-align: center;
+  font-size: 32px;
+  color: white;
+  background: purple;
+  padding: 20px;
+  border-radius: 10px;
+}
+.حكمة {
+  background: yellow;
+  padding: 30px;
+  border-radius: 15px;
+  text-align: center;
+  font-size: 22px;
+  margin: 20px;
+  border: 3px;
+}
+button {
+  background: green;
+  color: white;
+  padding: 15px;
+  border-radius: 8px;
+  margin: 10px;
+}
+p {
+  text-align: center;
+  font-size: 18px;
+  margin: 10px;
+}

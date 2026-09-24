@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 0.9 — القواميس
+//! الإصدار 1.1 — APIs
 
 mod ast;
 mod correction;
@@ -186,6 +186,9 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
             }
         }
         Expression::Call { name, args } => {
+            if name == "اقرأ_محلي" || name == "اقرأ_مدخل" || name == "اجلب" || name == "اجلب_نص" {
+                return Ok(Value::Null);
+            }
             let mut vs = Vec::new();
             for a in args { vs.push(eval(a, env)?); }
             match name.as_str() {
@@ -240,6 +243,7 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     _ => Err("أكبر تحتاج عددين".into()),
                 },
                 "عدد" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?)), _ => Err("عدد تحتاج قيمة".into()) },
+                "احفظ" => Ok(Value::Null),
                 _ => Err(format!("دالة غير معروفة: {}", name)),
             }
         }
@@ -344,7 +348,10 @@ impl Codegen {
             Expression::List(items) => items.iter().any(|i| self.is_reactive(i, state_vars)),
             Expression::Dict(pairs) => pairs.iter().any(|(_, v)| self.is_reactive(v, state_vars)),
             Expression::MemberAccess { object, .. } => self.is_reactive(object, state_vars),
-            Expression::Call { args, .. } => args.iter().any(|a| self.is_reactive(a, state_vars)),
+            Expression::Call { name, args } => {
+                if name == "اقرأ_محلي" { return true; }
+                args.iter().any(|a| self.is_reactive(a, state_vars))
+            }
             _ => false,
         }
     }
@@ -416,6 +423,9 @@ impl Codegen {
             }
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
+                if name == "اجلب" || name == "اجلب_نص" {
+                    return Ok(self.gen_fetch_call(name, args, "  "));
+                }
                 let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
                 if name == "اطبع" { Ok(format!("{}console.log({});\n", indent, a.join(", "))) }
                 else { Ok(format!("{}{}({});\n", indent, name, a.join(", "))) }
@@ -427,6 +437,47 @@ impl Codegen {
                 Ok(s)
             }
             _ => Ok(String::new()),
+        }
+    }
+
+    /// توليد JS لدالة اجلب
+    fn gen_fetch_call(&self, name: &str, args: &[Expression], indent: &str) -> String {
+        if args.len() < 2 {
+            return String::new();
+        }
+        let url_js = self.expr_to_js(&args[0]);
+        let var_name = match &args[1] {
+            Expression::String(s) => s.clone(),
+            _ => return String::new(),
+        };
+
+        // الوسيط الثالث الاختياري: اسم الحقل
+        let field_name = if args.len() >= 3 {
+            match &args[2] {
+                Expression::String(s) => Some(s.clone()),
+                _ => None,
+            }
+        } else {
+            None
+        };
+
+        if name == "اجلب" {
+            if let Some(field) = field_name {
+                format!(
+                    "{}fetch({url})\n{indent}  .then(function(r) {{ return r.json(); }})\n{indent}  .then(function(d) {{ حالة.{var} = (typeof d.{field} === 'string') ? d.{field} : JSON.stringify(d.{field}); }})\n{indent}  .catch(function(e) {{ حالة.{var} = 'خطأ: ' + e.message; }});\n",
+                    indent, indent = indent, url = url_js, var = var_name, field = field
+                )
+            } else {
+                format!(
+                    "{}fetch({url})\n{indent}  .then(function(r) {{ return r.json(); }})\n{indent}  .then(function(d) {{ if (typeof d === 'object' && d !== null) {{ const keys = Object.keys(d); for (const k of keys) {{ if (typeof d[k] === 'string') {{ حالة.{var} = d[k]; return; }} }} }} حالة.{var} = (typeof d === 'string') ? d : JSON.stringify(d); }})\n{indent}  .catch(function(e) {{ حالة.{var} = 'خطأ: ' + e.message; }});\n",
+                    indent, indent = indent, url = url_js, var = var_name
+                )
+            }
+        } else {
+            format!(
+                "{}fetch({url})\n{indent}  .then(function(r) {{ return r.text(); }})\n{indent}  .then(function(d) {{ حالة.{var} = d; }})\n{indent}  .catch(function(e) {{ حالة.{var} = 'خطأ: ' + e.message; }});\n",
+                indent, indent = indent, url = url_js, var = var_name
+            )
         }
     }
 
@@ -524,6 +575,7 @@ impl Codegen {
 
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
+
                 let component = self.components.get(name).cloned();
                 if let Some((params, body)) = component {
                     if self.depth > 20 { return Err("استدعاء متكرر لا نهائي".into()); }
@@ -539,10 +591,19 @@ impl Codegen {
                     for stmt in &body { html.push_str(&self.gen_html(stmt, &mut new_env, state_vars)?); }
                     self.depth -= 1;
                     Ok(html)
-                } else { Ok(String::new()) }
+                } else if name == "احفظ" {
+                    let a: Vec<String> = args.iter().map(|x| self.expr_to_js(x)).collect();
+                    self.events_js.push_str(&format!("احفظ({});\n", a.join(", ")));
+                    Ok(String::new())
+                } else if name == "اجلب" || name == "اجلب_نص" {
+                    let code = self.gen_fetch_call(name, args, "  ");
+                    self.events_js.push_str(&code);
+                    Ok(String::new())
+                } else {
+                    Ok(String::new())
+                }
             }
 
-            // ===== المتغيرات: احفظها في البيئة =====
             Statement::Let { name, value, .. } => {
                 let v = eval(value, env)?;
                 env.insert(name.clone(), v);
@@ -644,7 +705,6 @@ fn main() {
         }
     }
 
-    // ===== اجمع المتغيرات من body =====
     for s in &program.body {
         if let Statement::Let { name, value, .. } = s {
             if let Ok(v) = eval(value, &env) {
@@ -742,6 +802,21 @@ function أضف_مهمة(id_قائمة, نص) {
 function مفاتيح(d) { return Object.keys(d); }
 function قيم(d) { return Object.values(d); }
 function يحتوي_مفتاح(d, k) { return k in d; }
+function احفظ(مفتاح, قيمة) {
+  try {
+    localStorage.setItem(String(مفتاح), JSON.stringify(قيمة));
+  } catch (e) {
+    console.error("فشل الحفظ:", e);
+  }
+}
+function اقرأ_محلي(مفتاح) {
+  try {
+    const v = localStorage.getItem(String(مفتاح));
+    return v !== null ? JSON.parse(v) : null;
+  } catch (e) {
+    return null;
+  }
+}
 "#;
 
     let script = if !state_vars.is_empty() {
