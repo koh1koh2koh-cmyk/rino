@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+<meta charset="UTF-8">
+<title>🎨 Rino Playground</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  
+  body {
+    font-family: 'Segoe UI', 'Cairo', sans-serif;
+    background: #0a0e27;
+    color: #e2e8f0;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  
+  header {
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    padding: 12px 24px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.3);
+  }
+  
+  header h1 {
+    font-size: 20px;
+    color: white;
+  }
+  
+  header .actions {
+    display: flex;
+    gap: 10px;
+  }
+  
+  button {
+    padding: 10px 20px;
+    border: none;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: inherit;
+  }
+  
+  .btn-run {
+    background: #10b981;
+    color: white;
+  }
+  
+  .btn-run:hover {
+    background: #059669;
+    transform: translateY(-2px);
+  }
+  
+  .btn-run:disabled {
+    background: #4b5563;
+    cursor: wait;
+    transform: none;
+  }
+  
+  .btn-sample {
+    background: #3b82f6;
+    color: white;
+  }
+  
+  .btn-sample:hover { background: #2563eb; }
+  
+  .container {
+    display: flex;
+    flex: 1;
+    overflow: hidden;
+  }
+  
+  .editor-panel, .preview-panel {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  
+  .editor-panel {
+    border-left: 1px solid #2d3748;
+  }
+  
+  .panel-header {
+    background: #1a202c;
+    padding: 8px 16px;
+    font-size: 13px;
+    color: #a0aec0;
+    border-bottom: 1px solid #2d3748;
+    font-weight: bold;
+  }
+  
+  textarea {
+    flex: 1;
+    background: #0f1419;
+    color: #e2e8f0;
+    border: none;
+    padding: 20px;
+    font-family: 'Consolas', 'Courier New', monospace;
+    font-size: 15px;
+    line-height: 1.7;
+    resize: none;
+    outline: none;
+    direction: rtl;
+    text-align: right;
+  }
+  
+  iframe {
+    flex: 1;
+    background: white;
+    border: none;
+    width: 100%;
+  }
+  
+  .status {
+    background: #1a202c;
+    padding: 8px 16px;
+    font-size: 13px;
+    text-align: center;
+    border-top: 1px solid #2d3748;
+    color: #a0aec0;
+    min-height: 36px;
+  }
+  
+  .status.success { color: #10b981; }
+  .status.error { color: #ef4444; background: #2d1a1a; padding: 12px; font-family: monospace; }
+  .status.loading { color: #f59e0b; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>🎨 Rino Playground</h1>
+  <div class="actions">
+    <button class="btn-sample" onclick="loadSample()">📄 مثال</button>
+    <button class="btn-run" id="runBtn" onclick="runCode()">▶ شغّل</button>
+  </div>
+</header>
+
+<div class="container">
+  <div class="editor-panel">
+    <div class="panel-header">📝 محرر Rino</div>
+    <textarea id="editor" spellcheck="false"></textarea>
+  </div>
+  <div class="preview-panel">
+    <div class="panel-header">🌐 النتيجة</div>
+    <iframe id="preview" sandbox="allow-scripts allow-same-origin"></iframe>
+  </div>
+</div>
+
+<div class="status" id="status">جاهز</div>
+
+<script>
+  const editor = document.getElementById('editor');
+  const preview = document.getElementById('preview');
+  const status = document.getElementById('status');
+  const runBtn = document.getElementById('runBtn');
+
+  function setStatus(text, type) {
+    status.textContent = text;
+    status.className = 'status ' + (type || '');
+  }
+
+  async function loadSample() {
+    try {
+      const res = await fetch('/default');
+      const data = await res.json();
+      editor.value = data.code;
+      setStatus('تم تحميل المثال', 'success');
+    } catch (e) {
+      setStatus('فشل تحميل المثال: ' + e.message, 'error');
+    }
+  }
+
+  async function runCode() {
+    const code = editor.value;
+    if (!code.trim()) {
+      setStatus('الكود فارغ', 'error');
+      return;
+    }
+
+    runBtn.disabled = true;
+    setStatus('⏳ جاري الترجمة...', 'loading');
+
+    try {
+      const res = await fetch('/compile', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code })
+      });
+
+      const data = await res.json();
+
+      if (data.ok) {
+        // اكتب HTML في iframe
+        const iframeDoc = preview.contentDocument || preview.contentWindow.document;
+        iframeDoc.open();
+        iframeDoc.write(data.html);
+        iframeDoc.close();
+        setStatus('✅ تم بنجاح', 'success');
+      } else {
+        setStatus('❌ ' + (data.error || 'خطأ غير معروف'), 'error');
+      }
+    } catch (e) {
+      setStatus('❌ فشل الاتصال بالخادم: ' + e.message, 'error');
+    } finally {
+      runBtn.disabled = false;
+    }
+  }
+
+  // اختصارات لوحة المفاتيح
+  document.addEventListener('keydown', (e) => {
+    // Ctrl+Enter = شغّل
+    if (e.ctrlKey && e.key === 'Enter') {
+      e.preventDefault();
+      runCode();
+    }
+  });
+
+  // Tab في المحرر يُضيف مسافة
+  editor.addEventListener('keydown', (e) => {
+    if (e.key === 'Tab') {
+      e.preventDefault();
+      const start = editor.selectionStart;
+      const end = editor.selectionEnd;
+      editor.value = editor.value.substring(0, start) + '  ' + editor.value.substring(end);
+      editor.selectionStart = editor.selectionEnd = start + 2;
+    }
+  });
+
+  // حمّل المثال عند البدء
+  window.addEventListener('load', loadSample);
+</script>
+
+</body>
+</html>
