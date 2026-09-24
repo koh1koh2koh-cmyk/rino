@@ -143,6 +143,12 @@ impl Parser {
                     TokenKind::Footer => "footer".to_string(),
                     TokenKind::Bold => "b".to_string(),
                     TokenKind::Italic => "i".to_string(),
+                    TokenKind::Table => "table".to_string(),
+                    TokenKind::Row => "tr".to_string(),
+                    TokenKind::Cell => "td".to_string(),
+                    TokenKind::Video => "video".to_string(),
+                    TokenKind::Audio => "audio".to_string(),
+                    TokenKind::HR => "hr".to_string(),
                     other => return Err(format!("محدد غير مدعوم: {:?}", other)),
                 };
                 Ok((tag, SelectorKind::Tag))
@@ -259,11 +265,17 @@ impl Parser {
             TokenKind::Bold => self.parse_html("b"),
             TokenKind::Italic => self.parse_html("i"),
             TokenKind::Break => self.parse_html("br"),
+            TokenKind::Cell => self.parse_html("td"),
+            TokenKind::Video => self.parse_html("video"),
+            TokenKind::Audio => self.parse_html("audio"),
+            TokenKind::HR => self.parse_html("hr"),
             TokenKind::Div => self.parse_block_element("div"),
             TokenKind::Section => self.parse_block_element("section"),
             TokenKind::Header => self.parse_block_element("header"),
             TokenKind::Footer => self.parse_block_element("footer"),
             TokenKind::List => self.parse_block_element("ul"),
+            TokenKind::Table => self.parse_block_element("table"),
+            TokenKind::Row => self.parse_block_element("tr"),
             TokenKind::Print => {
                 self.advance();
                 self.expect(TokenKind::LParen)?;
@@ -360,7 +372,6 @@ impl Parser {
         self.expect(TokenKind::LParen)?;
         let var = self.expect_ident()?;
 
-        // هل هو `لكل (i في قائمة)` أم `لكل (i من a إلى b)`؟
         if *self.kind() == TokenKind::In {
             self.advance();
             let iterable = self.parse_expression()?;
@@ -416,6 +427,10 @@ impl Parser {
                 let a = args.into_iter().next().ok_or_else(|| "صورة تحتاج رابطًا".to_string())?;
                 (None, vec![("src".into(), a)])
             }
+            "video" | "audio" => {
+                let a = args.into_iter().next().ok_or_else(|| "وسائط تحتاج رابطًا".to_string())?;
+                (None, vec![("src".into(), a)])
+            }
             "input" => {
                 let mut it = args.into_iter();
                 let placeholder = it.next().ok_or_else(|| "مدخل يحتاج نصًا".to_string())?;
@@ -430,7 +445,7 @@ impl Parser {
                 let url = it.next().ok_or_else(|| "رابط يحتاج URL".to_string())?;
                 (Some(text), vec![("href".into(), url)])
             }
-            "br" => (None, vec![]),
+            "br" | "hr" => (None, vec![]),
             _ => {
                 let mut it = args.into_iter();
                 let c = it.next();

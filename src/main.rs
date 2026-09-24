@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 1.2 — قوائم + حاول/أمسك + حلقات رقمية
+//! الإصدار 1.3 — عناصر HTML جديدة
 
 mod ast;
 mod correction;
@@ -186,7 +186,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
             }
         }
         Expression::Call { name, args } => {
-            // دوال وقت التشغيل — تُقيَّم كـ null عند البناء
             if name == "اقرأ_محلي" || name == "اقرأ_مدخل" || name == "اجلب" || name == "اجلب_نص" {
                 return Ok(Value::Null);
             }
@@ -195,7 +194,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
             for a in args { vs.push(eval(a, env)?); }
 
             match name.as_str() {
-                // ===== دوال النصوص =====
                 "طول" => match vs.first() {
                     Some(Value::List(l)) => Ok(Value::Num(l.len() as f64)),
                     Some(Value::Str(s)) => Ok(Value::Num(s.chars().count() as f64)),
@@ -212,8 +210,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     (Some(Value::Str(s)), Some(Value::Str(a)), Some(Value::Str(b))) => Ok(Value::Str(s.replace(a.as_str(), b.as_str()))),
                     _ => Err("استبدل تحتاج 3 نصوص".into()),
                 },
-
-                // ===== دوال الأرقام =====
                 "جذر" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.sqrt())), _ => Err("جذر تحتاج عددًا".into()) },
                 "قوة" => match (vs.get(0), vs.get(1)) { (Some(a), Some(b)) => Ok(Value::Num(a.as_num()?.powf(b.as_num()?))), _ => Err("قوة تحتاج عددين".into()) },
                 "قوس" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?.round())), _ => Err("قوس تحتاج عددًا".into()) },
@@ -230,7 +226,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                 },
                 "عدد" => match vs.first() { Some(v) => Ok(Value::Num(v.as_num()?)), _ => Err("عدد تحتاج قيمة".into()) },
 
-                // ===== دوال القواميس =====
                 "مفاتيح" => match vs.first() {
                     Some(Value::Dict(p)) => {
                         let keys: Vec<Value> = p.iter().map(|(k, _)| Value::Str(k.clone())).collect();
@@ -252,7 +247,6 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                     _ => Err("يحتوي_مفتاح تحتاج قاموسًا ونصًا".into()),
                 },
 
-                // ===== دوال القوائم =====
                 "أضف" => match (vs.get(0), vs.get(1)) {
                     (Some(Value::List(l)), Some(v)) => {
                         let mut new_list = l.clone();
@@ -329,8 +323,10 @@ fn eval(expr: &Expression, env: &HashMap<String, Value>) -> Result<Value, String
                         let start = a.as_num()? as i64;
                         let end = b.as_num()? as i64;
                         let mut items = Vec::new();
-                        for i in start..=end {
-                            items.push(Value::Num(i as f64));
+                        if start <= end {
+                            for i in start..=end { items.push(Value::Num(i as f64)); }
+                        } else {
+                            for i in (end..=start).rev() { items.push(Value::Num(i as f64)); }
                         }
                         Ok(Value::List(items))
                     }
@@ -596,6 +592,11 @@ impl Codegen {
                     attr_str.push_str(&format!(" {}=\"{}\"", k, val));
                 }
 
+                // إضافة controls للفيديو والموسيقى
+                if tag == "video" || tag == "audio" {
+                    attr_str.push_str(" controls");
+                }
+
                 let needs_reactive = content.as_ref().map(|c| self.is_reactive(c, state_vars)).unwrap_or(false);
                 let needs_id = needs_reactive || !events.is_empty();
                 let id = if needs_id && existing_id.is_none() { Some(self.next_id()) } else { existing_id.clone() };
@@ -605,7 +606,7 @@ impl Codegen {
                 }
 
                 let (open, close, self_closing) = match tag.as_str() {
-                    "img" | "input" | "br" => (format!("<{}{}>", tag, attr_str), String::new(), true),
+                    "img" | "input" | "br" | "hr" => (format!("<{}{}>", tag, attr_str), String::new(), true),
                     _ => (format!("<{}{}>", tag, attr_str), format!("</{}>", tag), false),
                 };
 
@@ -677,7 +678,6 @@ impl Codegen {
                 } else { Ok(String::new()) }
             }
 
-            // ===== حلقة رقمية: نُفرّغها عند البناء =====
             Statement::RangeFor { var, start, end, step, body, .. } => {
                 let start_val = eval(start, env)?.as_num()? as i64;
                 let end_val = eval(end, env)?.as_num()? as i64;
@@ -701,7 +701,6 @@ impl Codegen {
             }
 
             Statement::TryCatch { try_body, catch_var, catch_body, .. } => {
-                // في HTML، نحاول تنفيذ try_body، وإذا فشل، نُنفّذ catch_body
                 let mut s = String::new();
                 let mut error_occurred = false;
 

@@ -1,0 +1,23 @@
+.عنوان_رئيسي {
+  text-align: center;
+  color: green;
+  font-size: 30px;
+}
+table {
+  margin: auto;
+  border: 2px;
+}
+td {
+  padding: 10px;
+  border: 1px;
+  text-align: center;
+}
+video {
+  border-radius: 10px;
+}
+audio {
+  width: 400px;
+}
+hr {
+  margin: 20px;
+}

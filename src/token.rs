@@ -3,7 +3,6 @@
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum TokenKind {
-    // كلمات مفتاحية
     Page, Style, State, Body, Logic,
     Let, Const, Function, Return,
     If, Else, For, In, And, Or, Not,
@@ -12,22 +11,18 @@ pub enum TokenKind {
     Component,
     Try, Catch, From, To, Step,
 
-    // عناصر واجهة
     H1, P, Button, Image, Link, Input, List, ListItem,
     Div, Section, Header, Footer,
     Bold, Italic, Break,
+    Table, Row, Cell, Video, Audio, HR,
 
-    // CSS selectors
     Dot, Hash,
     OnHover,
 
-    // دوال مدمجة
     Print,
 
-    // أحداث
     OnClick, OnChange,
 
-    // رموز
     LParen, RParen,
     LBrace, RBrace,
     LBracket, RBracket,
@@ -35,7 +30,6 @@ pub enum TokenKind {
     EqEq, NotEq, Greater, Less,
     Plus, Minus, Star, Slash, Percent,
 
-    // قيم
     String(String),
     Number(f64),
     Identifier(String),
@@ -96,6 +90,12 @@ pub fn keyword_to_token(word: &str) -> Option<TokenKind> {
         "عريض" => Bold,
         "مائل" => Italic,
         "فاصل" => Break,
+        "جدول" => Table,
+        "صف" => Row,
+        "خلية" => Cell,
+        "فيديو" => Video,
+        "موسيقى" => Audio,
+        "فاصل_أفقي" => HR,
         "اطبع" => Print,
         "عند_الضغط" => OnClick,
         "عند_التغيير" => OnChange,
