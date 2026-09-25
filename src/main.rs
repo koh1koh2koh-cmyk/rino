@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 1.5 — مكتبة مكونات جاهزة
+//! الإصدار 1.8 — دعم الأسلوب البايثوني
 
 mod ast;
 mod correction;
@@ -184,6 +184,94 @@ const BUILTIN_CSS: &str = r#"
   border: none;
 }
 "#;
+
+/// ============ Preprocessor: الأسلوب البايثوني → الأقواس ============
+
+/// يحذف التعليقات من سطر (مع احترام النصوص)
+fn strip_comment(line: &str) -> String {
+    let mut result = String::new();
+    let mut in_string = false;
+    let chars: Vec<char> = line.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        let c = chars[i];
+        if c == '"' {
+            in_string = !in_string;
+            result.push(c);
+        } else if !in_string && c == '/' && i + 1 < chars.len() && chars[i + 1] == '/' {
+            break;
+        } else {
+            result.push(c);
+        }
+        i += 1;
+    }
+    result
+}
+
+/// يحوّل الأسلوب البايثوني (إزاحة + `:`) إلى الأسلوب بالأقواس
+fn preprocess_indentation(source: &str) -> String {
+    // هل الملف يستخدم `{` أو `}` في نهاية سطر؟ → أسلوب الأقواس
+    let has_braces = source.lines().any(|line| {
+        let no_comment = strip_comment(line);
+        let trimmed = no_comment.trim_end();
+        trimmed.ends_with('{') || trimmed.ends_with('}')
+    });
+
+    if has_braces {
+        return source.to_string();
+    }
+
+    let mut output = String::new();
+    let mut indent_stack: Vec<usize> = Vec::new();
+
+    for line in source.lines() {
+        let content = strip_comment(line);
+        let trimmed = content.trim_end();
+
+        if trimmed.trim().is_empty() {
+            output.push('\n');
+            continue;
+        }
+
+        let indent = content.len() - content.trim_start().len();
+
+        // أغلق الكتل حسب الإزاحة
+        while let Some(&top) = indent_stack.last() {
+            if indent <= top {
+                indent_stack.pop();
+                for _ in 0..top {
+                    output.push(' ');
+                }
+                output.push_str("}\n");
+            } else {
+                break;
+            }
+        }
+
+        // اكتب السطر
+        if trimmed.ends_with(':') {
+            let without = trimmed[..trimmed.len() - 1].trim_end();
+            output.push_str(without);
+            output.push_str(" {\n");
+            indent_stack.push(indent);
+        } else {
+            output.push_str(trimmed);
+            output.push('\n');
+        }
+    }
+
+    // أغلق كل الكتل المتبقية
+    while let Some(top) = indent_stack.pop() {
+        for _ in 0..top {
+            output.push(' ');
+        }
+        output.push_str("}\n");
+    }
+
+    output
+}
+
+/// ============ نظام الاستيراد ============
 
 fn process_imports(source: &str, base_dir: &Path, visited: &mut HashSet<PathBuf>, depth: usize) -> Result<String, String> {
     if depth > 20 { return Err("عدد الاستيرادات المتتالية كبير جدًا".into()); }
@@ -716,7 +804,6 @@ impl Codegen {
     }
     fn next_id(&mut self) -> String { self.counter += 1; format!("r{}", self.counter) }
 
-    /// ============ مكتبة المكونات الجاهزة ============
     fn gen_builtin(&mut self, name: &str, args: &[Expression], env: &HashMap<String, Value>) -> Option<String> {
         let get_str = |i: usize| -> String {
             args.get(i).and_then(|a| eval(a, env).ok()).map(|v| v.to_display()).unwrap_or_default()
@@ -726,9 +813,7 @@ impl Codegen {
         };
 
         match name {
-            "زر_جميل" => {
-                Some(format!("<button class=\"rino-btn\">{}</button>", get_str(0)))
-            }
+            "زر_جميل" => Some(format!("<button class=\"rino-btn\">{}</button>", get_str(0))),
             "بطاقة" => {
                 let title = get_str(0);
                 let desc = get_str(1);
@@ -1059,12 +1144,10 @@ impl Codegen {
             Statement::Call { name, args, .. } => {
                 if name == "_skip_" { return Ok(String::new()); }
 
-                // ===== 1) مكتبة المكونات الجاهزة =====
                 if let Some(html) = self.gen_builtin(name, args, env) {
                     return Ok(html);
                 }
 
-                // ===== 2) مكونات المستخدم =====
                 let component = self.components.get(name).cloned();
                 if let Some((params, body)) = component {
                     if self.depth > 20 { return Err("استدعاء متكرر لا نهائي".into()); }
@@ -1145,6 +1228,7 @@ fn main() {
         if let Ok(c) = test_path.canonicalize() { v.insert(c); }
         let dir = test_path.parent().unwrap_or(Path::new("."));
         let src = process_imports(&src, dir, &mut v, 0).expect("فشل معالجة الاستيرادات");
+        let src = preprocess_indentation(&src);
 
         let mut lx = Lexer::new(&src);
         let tk = lx.tokenize().expect("خطأ لغوي");
@@ -1190,6 +1274,7 @@ fn main() {
         Ok(s) => s,
         Err(e) => { eprintln!("❌ {}", e); std::process::exit(1); }
     };
+    let source = preprocess_indentation(&source);
 
     let mut lexer = Lexer::new(&source);
     let tokens = match lexer.tokenize() {
@@ -1252,7 +1337,6 @@ fn main() {
         body_html.push_str(&cg.gen_html(s, &mut env, &state_vars).unwrap_or_default());
     }
 
-    // CSS — يبدأ بـ BUILTIN_CSS ثم CSS المستخدم
     let mut css = String::from(BUILTIN_CSS);
     css.push('\n');
     for r in &program.styles {
