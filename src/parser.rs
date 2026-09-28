@@ -13,32 +13,53 @@ impl Parser {
         Self { tokens, pos: 0 }
     }
 
-    fn peek(&self) -> &Token { &self.tokens[self.pos] }
-    fn kind(&self) -> &TokenKind { &self.tokens[self.pos].kind }
+    fn peek(&self) -> &Token {
+        &self.tokens[self.pos]
+    }
+
+    fn kind(&self) -> &TokenKind {
+        &self.tokens[self.pos].kind
+    }
 
     fn advance(&mut self) -> Token {
         let t = self.tokens[self.pos].clone();
-        if self.pos < self.tokens.len() - 1 { self.pos += 1; }
+        if self.pos < self.tokens.len() - 1 {
+            self.pos += 1;
+        }
         t
     }
 
     fn expect(&mut self, kind: TokenKind) -> Result<Token, String> {
         let t = self.peek().clone();
-        if t.kind == kind { Ok(self.advance()) }
-        else { Err(format!("متوقع {:?} لكن وجد {:?} في السطر {}", kind, t.kind, t.line)) }
-    }
-
-    fn expect_ident(&mut self) -> Result<String, String> {
-        match self.advance().kind {
-            TokenKind::Identifier(n) => Ok(n),
-            other => Err(format!("متوقع اسم، وجد {:?}", other)),
+        if t.kind == kind {
+            Ok(self.advance())
+        } else {
+            Err(format!(
+                "متوقع {:?} لكن وجد {:?} في السطر {}",
+                kind, t.kind, t.line
+            ))
         }
     }
 
+    fn expect_ident(&mut self) -> Result<String, String> {
+        let t = self.peek().clone();
+        match self.advance().kind {
+            TokenKind::Identifier(n) => Ok(n),
+            other => Err(format!(
+                "متوقع اسم في السطر {}، وجد {:?}",
+                t.line, other
+            )),
+        }
+    }
+
+    // ==========================================
+    // نقطة الدخول
+    // ==========================================
     pub fn parse(&mut self) -> Result<Program, String> {
         let mut page_title = None;
         let mut styles = Vec::new();
         let mut state = Vec::new();
+        let mut derived = Vec::new();
         let mut functions = Vec::new();
         let mut components = Vec::new();
         let mut tests = Vec::new();
@@ -52,17 +73,33 @@ impl Parser {
                 TokenKind::State => {
                     self.advance();
                     self.expect(TokenKind::LBrace)?;
-                    while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
+                    while *self.kind() != TokenKind::RBrace
+                        && *self.kind() != TokenKind::EOF
+                    {
                         let mut s = self.parse_statement()?;
-                        if let Statement::Let { is_state, .. } = &mut s { *is_state = true; }
+                        if let Statement::Let { is_state, .. } = &mut s {
+                            *is_state = true;
+                        }
                         state.push(s);
+                    }
+                    self.expect(TokenKind::RBrace)?;
+                }
+                TokenKind::Derived => {
+                    self.advance();
+                    self.expect(TokenKind::LBrace)?;
+                    while *self.kind() != TokenKind::RBrace
+                        && *self.kind() != TokenKind::EOF
+                    {
+                        derived.push(self.parse_statement()?);
                     }
                     self.expect(TokenKind::RBrace)?;
                 }
                 TokenKind::Logic => {
                     self.advance();
                     self.expect(TokenKind::LBrace)?;
-                    while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
+                    while *self.kind() != TokenKind::RBrace
+                        && *self.kind() != TokenKind::EOF
+                    {
                         functions.push(self.parse_statement()?);
                     }
                     self.expect(TokenKind::RBrace)?;
@@ -70,7 +107,9 @@ impl Parser {
                 TokenKind::Body => {
                     self.advance();
                     self.expect(TokenKind::LBrace)?;
-                    while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
+                    while *self.kind() != TokenKind::RBrace
+                        && *self.kind() != TokenKind::EOF
+                    {
                         body.push(self.parse_statement()?);
                     }
                     self.expect(TokenKind::RBrace)?;
@@ -86,8 +125,15 @@ impl Parser {
         }
 
         Ok(Program {
-            page_title, styles, state, functions, components, tests,
-            body, top_level: Vec::new(),
+            page_title,
+            styles,
+            state,
+            derived,
+            functions,
+            components,
+            tests,
+            body,
+            top_level: Vec::new(),
         })
     }
 
@@ -103,7 +149,7 @@ impl Parser {
         let tok = self.advance();
         let name = match self.advance().kind {
             TokenKind::String(s) => s,
-            other => return Err(format!("متوقع اسم نصي للاختبار، وجد {:?}", other)),
+            other => return Err(format!("متوقع اسم نصي، وجد {:?}", other)),
         };
         let body = self.parse_block()?;
         Ok(Statement::Test { name, body, line: tok.line })
@@ -113,7 +159,7 @@ impl Parser {
         let tok = self.advance();
         let name = match self.advance().kind {
             TokenKind::String(s) => s,
-            other => return Err(format!("متوقع اسم نصي للمكون، وجد {:?}", other)),
+            other => return Err(format!("متوقع اسم نصي، وجد {:?}", other)),
         };
         self.expect(TokenKind::LParen)?;
         let mut params = Vec::new();
@@ -126,44 +172,89 @@ impl Parser {
         }
         self.expect(TokenKind::RParen)?;
         let body = self.parse_block()?;
-        Ok(Statement::ComponentDef { name, params, body, line: tok.line })
+        Ok(Statement::ComponentDef {
+            name,
+            params,
+            body,
+            line: tok.line,
+        })
     }
 
+    // ==========================================
+    // المحددات
+    // ==========================================
     fn parse_selector(&mut self) -> Result<(String, SelectorKind), String> {
-        let kind_marker = self.kind().clone();
-        match kind_marker {
+        match self.kind().clone() {
             TokenKind::Dot => {
                 self.advance();
-                let name = self.expect_ident()?;
-                Ok((name, SelectorKind::Class))
+                Ok((self.expect_ident()?, SelectorKind::Class))
             }
             TokenKind::Hash => {
                 self.advance();
-                let name = self.expect_ident()?;
-                Ok((name, SelectorKind::Id))
+                Ok((self.expect_ident()?, SelectorKind::Id))
             }
             _ => {
                 let tag = match self.advance().kind {
                     TokenKind::H1 => "h1".to_string(),
+                    TokenKind::H2 => "h2".to_string(),
+                    TokenKind::H3 => "h3".to_string(),
+                    TokenKind::H4 => "h4".to_string(),
+                    TokenKind::H5 => "h5".to_string(),
+                    TokenKind::H6 => "h6".to_string(),
                     TokenKind::P => "p".to_string(),
+                    TokenKind::Small => "small".to_string(),
+                    TokenKind::Span => "span".to_string(),
+                    TokenKind::Strong => "strong".to_string(),
+                    TokenKind::Em => "em".to_string(),
+                    TokenKind::Mark => "mark".to_string(),
+                    TokenKind::Blockquote => "blockquote".to_string(),
+                    TokenKind::Code => "code".to_string(),
+                    TokenKind::Pre => "pre".to_string(),
+                    TokenKind::Abbr => "abbr".to_string(),
                     TokenKind::Button => "button".to_string(),
                     TokenKind::Image => "img".to_string(),
                     TokenKind::Link => "a".to_string(),
                     TokenKind::Input => "input".to_string(),
-                    TokenKind::List => "ul".to_string(),
-                    TokenKind::ListItem => "li".to_string(),
+                    TokenKind::TextArea => "textarea".to_string(),
+                    TokenKind::Select => "select".to_string(),
+                    TokenKind::Option => "option".to_string(),
+                    TokenKind::Form => "form".to_string(),
+                    TokenKind::Label => "label".to_string(),
+                    TokenKind::FieldSet => "fieldset".to_string(),
+                    TokenKind::Progress => "progress".to_string(),
+                    TokenKind::Meter => "meter".to_string(),
                     TokenKind::Div => "div".to_string(),
                     TokenKind::Section => "section".to_string(),
                     TokenKind::Header => "header".to_string(),
                     TokenKind::Footer => "footer".to_string(),
-                    TokenKind::Bold => "b".to_string(),
-                    TokenKind::Italic => "i".to_string(),
+                    TokenKind::Main => "main".to_string(),
+                    TokenKind::Nav => "nav".to_string(),
+                    TokenKind::Article => "article".to_string(),
+                    TokenKind::Aside => "aside".to_string(),
+                    TokenKind::Figure => "figure".to_string(),
+                    TokenKind::Details => "details".to_string(),
+                    TokenKind::Dialog => "dialog".to_string(),
+                    TokenKind::List => "ul".to_string(),
+                    TokenKind::OrderedList => "ol".to_string(),
+                    TokenKind::ListItem => "li".to_string(),
                     TokenKind::Table => "table".to_string(),
                     TokenKind::Row => "tr".to_string(),
                     TokenKind::Cell => "td".to_string(),
+                    TokenKind::HeaderCell => "th".to_string(),
+                    TokenKind::TableBody => "tbody".to_string(),
+                    TokenKind::TableHead => "thead".to_string(),
+                    TokenKind::TableFooter => "tfoot".to_string(),
+                    TokenKind::Caption => "caption".to_string(),
                     TokenKind::Video => "video".to_string(),
                     TokenKind::Audio => "audio".to_string(),
+                    TokenKind::IFrame => "iframe".to_string(),
+                    TokenKind::Canvas => "canvas".to_string(),
+                    TokenKind::SVG => "svg".to_string(),
+                    TokenKind::Picture => "picture".to_string(),
+                    TokenKind::Map => "map".to_string(),
                     TokenKind::HR => "hr".to_string(),
+                    TokenKind::Bold => "b".to_string(),
+                    TokenKind::Italic => "i".to_string(),
                     other => return Err(format!("محدد غير مدعوم: {:?}", other)),
                 };
                 Ok((tag, SelectorKind::Tag))
@@ -171,67 +262,75 @@ impl Parser {
         }
     }
 
-    fn parse_properties(&mut self) -> Result<Vec<(String, String)>, String> {
-        self.expect(TokenKind::LBrace)?;
-        let mut props = Vec::new();
-        while *self.kind() != TokenKind::RBrace {
-            if *self.kind() == TokenKind::OnHover { break; }
-            let name = self.expect_ident()?;
-            self.expect(TokenKind::Colon)?;
-            let val = match self.advance().kind {
-                TokenKind::String(s) => s,
-                TokenKind::Number(n) => {
-                    if n.fract() == 0.0 { format!("{}", n as i64) }
-                    else { format!("{}", n) }
-                }
-                other => return Err(format!("متوقع قيمة، وجد {:?}", other)),
-            };
-            props.push((name, val));
-            if *self.kind() == TokenKind::Comma { self.advance(); }
+    fn parse_prop_value(&mut self) -> Result<String, String> {
+        let t = self.advance();
+        match t.kind {
+            TokenKind::String(s) => Ok(s),
+            TokenKind::Number(n) => Ok(if n.fract() == 0.0 {
+                format!("{}", n as i64)
+            } else {
+                format!("{}", n)
+            }),
+            TokenKind::Identifier(s) => Ok(s),
+            other => Err(format!(
+                "متوقع قيمة نمط، وجد {:?} في السطر {}",
+                other, t.line
+            )),
         }
-        Ok(props)
     }
 
     fn parse_style_block(&mut self) -> Result<Vec<StyleRule>, String> {
         self.advance();
         self.expect(TokenKind::LBrace)?;
         let mut rules = Vec::new();
-
         while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
             let (selector, selector_kind) = self.parse_selector()?;
             self.expect(TokenKind::LBrace)?;
-
             let mut properties = Vec::new();
             let mut hover_properties = Vec::new();
 
-            while *self.kind() != TokenKind::RBrace {
+            while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
                 if *self.kind() == TokenKind::OnHover {
                     self.advance();
-                    hover_properties = self.parse_properties()?;
+                    self.expect(TokenKind::LBrace)?;
+                    while *self.kind() != TokenKind::RBrace {
+                        let name = self.expect_ident()?;
+                        self.expect(TokenKind::Colon)?;
+                        let val = self.parse_prop_value()?;
+                        hover_properties.push((name, val));
+                        if *self.kind() == TokenKind::Comma {
+                            self.advance();
+                        }
+                    }
                     self.expect(TokenKind::RBrace)?;
+                    if *self.kind() == TokenKind::Comma {
+                        self.advance();
+                    }
                     continue;
                 }
                 let name = self.expect_ident()?;
                 self.expect(TokenKind::Colon)?;
-                let val = match self.advance().kind {
-                    TokenKind::String(s) => s,
-                    TokenKind::Number(n) => {
-                        if n.fract() == 0.0 { format!("{}", n as i64) }
-                        else { format!("{}", n) }
-                    }
-                    other => return Err(format!("متوقع قيمة، وجد {:?}", other)),
-                };
+                let val = self.parse_prop_value()?;
                 properties.push((name, val));
-                if *self.kind() == TokenKind::Comma { self.advance(); }
+                if *self.kind() == TokenKind::Comma {
+                    self.advance();
+                }
             }
             self.expect(TokenKind::RBrace)?;
-
-            rules.push(StyleRule { selector, selector_kind, properties, hover_properties });
+            rules.push(StyleRule {
+                selector,
+                selector_kind,
+                properties,
+                hover_properties,
+            });
         }
         self.expect(TokenKind::RBrace)?;
         Ok(rules)
     }
 
+    // ==========================================
+    // الكتل
+    // ==========================================
     fn parse_block(&mut self) -> Result<Vec<Statement>, String> {
         self.expect(TokenKind::LBrace)?;
         let mut stmts = Vec::new();
@@ -242,6 +341,9 @@ impl Parser {
         Ok(stmts)
     }
 
+    // ==========================================
+    // الجمل
+    // ==========================================
     fn parse_statement(&mut self) -> Result<Statement, String> {
         let tok = self.peek().clone();
         match &tok.kind {
@@ -250,7 +352,12 @@ impl Parser {
                 let name = self.expect_ident()?;
                 self.expect(TokenKind::Assign)?;
                 let value = self.parse_expression()?;
-                Ok(Statement::Let { name, value, is_state: false, line: tok.line })
+                Ok(Statement::Let {
+                    name,
+                    value,
+                    is_state: false,
+                    line: tok.line,
+                })
             }
             TokenKind::Const => {
                 self.advance();
@@ -264,104 +371,196 @@ impl Parser {
                 self.advance();
                 let value = if matches!(*self.kind(), TokenKind::RBrace | TokenKind::EOF) {
                     None
-                } else { Some(self.parse_expression()?) };
+                } else {
+                    Some(self.parse_expression()?)
+                };
                 Ok(Statement::Return { value, line: tok.line })
             }
             TokenKind::If => self.parse_if(),
             TokenKind::For => self.parse_for(),
+            TokenKind::While => self.parse_while(),
+            TokenKind::Break => {
+                self.advance();
+                Ok(Statement::Break { line: tok.line })
+            }
+            TokenKind::Continue => {
+                self.advance();
+                Ok(Statement::Continue { line: tok.line })
+            }
             TokenKind::Try => self.parse_try(),
+
+            // عناوين
             TokenKind::H1 => self.parse_html("h1"),
+            TokenKind::H2 => self.parse_html("h2"),
+            TokenKind::H3 => self.parse_html("h3"),
+            TokenKind::H4 => self.parse_html("h4"),
+            TokenKind::H5 => self.parse_html("h5"),
+            TokenKind::H6 => self.parse_html("h6"),
+
+            // نصوص
             TokenKind::P => self.parse_html("p"),
+            TokenKind::Small => self.parse_html("small"),
+            TokenKind::Span => self.parse_html("span"),
+            TokenKind::Strong => self.parse_html("strong"),
+            TokenKind::Em => self.parse_html("em"),
+            TokenKind::Mark => self.parse_html("mark"),
+            TokenKind::Del => self.parse_html("del"),
+            TokenKind::Ins => self.parse_html("ins"),
+            TokenKind::Kbd => self.parse_html("kbd"),
+            TokenKind::Abbr => self.parse_html("abbr"),
+            TokenKind::Cite => self.parse_html("cite"),
+            TokenKind::Dfn => self.parse_html("dfn"),
+            TokenKind::Address => self.parse_html("address"),
+            TokenKind::Time => self.parse_html("time"),
+            TokenKind::Data => self.parse_html("data"),
+            TokenKind::Bdi => self.parse_html("bdi"),
+            TokenKind::Bdo => self.parse_html("bdo"),
+            TokenKind::Wbr => self.parse_html("wbr"),
+            TokenKind::Q => self.parse_html("q"),
+            TokenKind::Samp => self.parse_html("samp"),
+            TokenKind::Var => self.parse_html("var"),
+            TokenKind::Sub => self.parse_html("sub"),
+            TokenKind::Sup => self.parse_html("sup"),
+            TokenKind::Bold => self.parse_html("b"),
+            TokenKind::Italic => self.parse_html("i"),
+            TokenKind::Break_ => self.parse_html("br"),
+            TokenKind::Blockquote => self.parse_block_element("blockquote"),
+            TokenKind::Code => self.parse_block_element("code"),
+            TokenKind::Pre => self.parse_block_element("pre"),
+
+            // تفاعل
             TokenKind::Button => self.parse_html("button"),
             TokenKind::Image => self.parse_html("img"),
             TokenKind::Link => self.parse_html("a"),
             TokenKind::Input => self.parse_html("input"),
-            TokenKind::ListItem => self.parse_html("li"),
-            TokenKind::Bold => self.parse_html("b"),
-            TokenKind::Italic => self.parse_html("i"),
-            TokenKind::Break => self.parse_html("br"),
-            TokenKind::Cell => self.parse_html("td"),
-            TokenKind::Video => self.parse_html("video"),
-            TokenKind::Audio => self.parse_html("audio"),
-            TokenKind::HR => self.parse_html("hr"),
+            TokenKind::TextArea => self.parse_html("textarea"),
+            TokenKind::Option => self.parse_html("option"),
+            TokenKind::Label => self.parse_html("label"),
+            TokenKind::Legend => self.parse_html("legend"),
+            TokenKind::Output => self.parse_html("output"),
+            TokenKind::Progress => self.parse_html("progress"),
+            TokenKind::Meter => self.parse_html("meter"),
+            TokenKind::Form => self.parse_block_element("form"),
+            TokenKind::Select => self.parse_block_element("select"),
+            TokenKind::FieldSet => self.parse_block_element("fieldset"),
+            TokenKind::DataList => self.parse_block_element("datalist"),
+            TokenKind::OptGroup => self.parse_block_element("optgroup"),
+
+            // تخطيط
             TokenKind::Div => self.parse_block_element("div"),
             TokenKind::Section => self.parse_block_element("section"),
             TokenKind::Header => self.parse_block_element("header"),
             TokenKind::Footer => self.parse_block_element("footer"),
+            TokenKind::Main => self.parse_block_element("main"),
+            TokenKind::Nav => self.parse_block_element("nav"),
+            TokenKind::Article => self.parse_block_element("article"),
+            TokenKind::Aside => self.parse_block_element("aside"),
+            TokenKind::Figure => self.parse_block_element("figure"),
+            TokenKind::FigCaption => self.parse_html("figcaption"),
+            TokenKind::Details => self.parse_block_element("details"),
+            TokenKind::Summary => self.parse_html("summary"),
+            TokenKind::Dialog => self.parse_block_element("dialog"),
+            TokenKind::Template => self.parse_block_element("template"),
+            TokenKind::NoScript => self.parse_block_element("noscript"),
+            TokenKind::Slot => self.parse_html("slot"),
+
+            // قوائم
             TokenKind::List => self.parse_block_element("ul"),
+            TokenKind::OrderedList => self.parse_block_element("ol"),
+            TokenKind::ListItem => self.parse_html("li"),
+
+            // جداول
             TokenKind::Table => self.parse_block_element("table"),
             TokenKind::Row => self.parse_block_element("tr"),
-            TokenKind::Print => {
-                self.advance();
-                self.expect(TokenKind::LParen)?;
-                let mut args = Vec::new();
-                if *self.kind() != TokenKind::RParen {
-                    args.push(self.parse_expression()?);
-                    while *self.kind() == TokenKind::Comma {
-                        self.advance();
-                        args.push(self.parse_expression()?);
-                    }
-                }
-                self.expect(TokenKind::RParen)?;
-                Ok(Statement::Call { name: "اطبع".into(), args, line: tok.line })
-            }
-            TokenKind::Expect => {
-                self.advance();
-                self.expect(TokenKind::LParen)?;
-                let mut args = Vec::new();
-                if *self.kind() != TokenKind::RParen {
-                    args.push(self.parse_expression()?);
-                    while *self.kind() == TokenKind::Comma {
-                        self.advance();
-                        args.push(self.parse_expression()?);
-                    }
-                }
-                self.expect(TokenKind::RParen)?;
-                Ok(Statement::Call { name: "توقع".into(), args, line: tok.line })
-            }
-            TokenKind::ExpectEquals => {
-                self.advance();
-                self.expect(TokenKind::LParen)?;
-                let mut args = Vec::new();
-                if *self.kind() != TokenKind::RParen {
-                    args.push(self.parse_expression()?);
-                    while *self.kind() == TokenKind::Comma {
-                        self.advance();
-                        args.push(self.parse_expression()?);
-                    }
-                }
-                self.expect(TokenKind::RParen)?;
-                Ok(Statement::Call { name: "توقع_يساوي".into(), args, line: tok.line })
-            }
+            TokenKind::Cell => self.parse_html("td"),
+            TokenKind::HeaderCell => self.parse_html("th"),
+            TokenKind::TableBody => self.parse_block_element("tbody"),
+            TokenKind::TableHead => self.parse_block_element("thead"),
+            TokenKind::TableFooter => self.parse_block_element("tfoot"),
+            TokenKind::Caption => self.parse_html("caption"),
+            TokenKind::ColGroup => self.parse_block_element("colgroup"),
+            TokenKind::Col => self.parse_html("col"),
+
+            // وسائط
+            TokenKind::Video => self.parse_html("video"),
+            TokenKind::Audio => self.parse_html("audio"),
+            TokenKind::IFrame => self.parse_html("iframe"),
+            TokenKind::Canvas => self.parse_html("canvas"),
+            TokenKind::SVG => self.parse_block_element("svg"),
+            TokenKind::Picture => self.parse_block_element("picture"),
+            TokenKind::Source => self.parse_html("source"),
+            TokenKind::Track => self.parse_html("track"),
+            TokenKind::Map => self.parse_block_element("map"),
+            TokenKind::Area => self.parse_html("area"),
+            TokenKind::HR => self.parse_html("hr"),
+
+            // جمل خاصة
+            TokenKind::Print => self.parse_call_stmt("اطبع"),
+            TokenKind::Expect => self.parse_call_stmt("توقع"),
+            TokenKind::ExpectEquals => self.parse_call_stmt("توقع_يساوي"),
+
             TokenKind::And | TokenKind::Or => {
                 self.advance();
-                Ok(Statement::Call { name: "_skip_".into(), args: vec![], line: tok.line })
+                Ok(Statement::Call {
+                    name: "_skip_".into(),
+                    args: vec![],
+                    line: tok.line,
+                })
             }
+
             TokenKind::Identifier(name) => {
                 let name = name.clone();
                 self.advance();
                 if *self.kind() == TokenKind::Assign {
                     self.advance();
                     let value = self.parse_expression()?;
-                    Ok(Statement::Assignment { name, value, line: tok.line })
+                    Ok(Statement::Assignment {
+                        name,
+                        value,
+                        line: tok.line,
+                    })
                 } else if *self.kind() == TokenKind::LParen {
                     self.advance();
-                    let mut args = Vec::new();
-                    if *self.kind() != TokenKind::RParen {
-                        args.push(self.parse_expression()?);
-                        while *self.kind() == TokenKind::Comma {
-                            self.advance();
-                            args.push(self.parse_expression()?);
-                        }
-                    }
-                    self.expect(TokenKind::RParen)?;
-                    Ok(Statement::Call { name, args, line: tok.line })
+                    let args = self.parse_args()?;
+                    Ok(Statement::Call {
+                        name,
+                        args,
+                        line: tok.line,
+                    })
                 } else {
                     Err(format!("جملة غير مفهومة للسطر {}", tok.line))
                 }
             }
-            _ => Err(format!("جملة غير متوقعة {:?} في السطر {}", tok.kind, tok.line)),
+
+            _ => Err(format!(
+                "جملة غير متوقعة {:?} في السطر {}",
+                tok.kind, tok.line
+            )),
         }
+    }
+
+    fn parse_call_stmt(&mut self, name: &str) -> Result<Statement, String> {
+        let tok = self.advance();
+        self.expect(TokenKind::LParen)?;
+        let args = self.parse_args()?;
+        Ok(Statement::Call {
+            name: name.into(),
+            args,
+            line: tok.line,
+        })
+    }
+
+    fn parse_args(&mut self) -> Result<Vec<Expression>, String> {
+        let mut args = Vec::new();
+        if *self.kind() != TokenKind::RParen {
+            args.push(self.parse_expression()?);
+            while *self.kind() == TokenKind::Comma {
+                self.advance();
+                args.push(self.parse_expression()?);
+            }
+        }
+        self.expect(TokenKind::RParen)?;
+        Ok(args)
     }
 
     fn parse_block_element(&mut self, tag: &str) -> Result<Statement, String> {
@@ -373,8 +572,12 @@ impl Parser {
         }
         self.expect(TokenKind::RBrace)?;
         Ok(Statement::HtmlElement {
-            tag: tag.to_string(), content: None, attrs: vec![],
-            children: Some(children), events: vec![], line: tok.line,
+            tag: tag.into(),
+            content: None,
+            attrs: vec![],
+            children: Some(children),
+            events: vec![],
+            line: tok.line,
         })
     }
 
@@ -392,7 +595,12 @@ impl Parser {
         }
         self.expect(TokenKind::RParen)?;
         let body = self.parse_block()?;
-        Ok(Statement::Function { name, params, body, line: tok.line })
+        Ok(Statement::Function {
+            name,
+            params,
+            body,
+            line: tok.line,
+        })
     }
 
     fn parse_if(&mut self) -> Result<Statement, String> {
@@ -405,9 +613,18 @@ impl Parser {
             self.advance();
             if *self.kind() == TokenKind::If {
                 vec![self.parse_if()?]
-            } else { self.parse_block()? }
-        } else { Vec::new() };
-        Ok(Statement::If { condition, then_branch, else_branch, line: tok.line })
+            } else {
+                self.parse_block()?
+            }
+        } else {
+            Vec::new()
+        };
+        Ok(Statement::If {
+            condition,
+            then_branch,
+            else_branch,
+            line: tok.line,
+        })
     }
 
     fn parse_for(&mut self) -> Result<Statement, String> {
@@ -420,7 +637,12 @@ impl Parser {
             let iterable = self.parse_expression()?;
             self.expect(TokenKind::RParen)?;
             let body = self.parse_block()?;
-            return Ok(Statement::ForEach { var, iterable, body, line: tok.line });
+            return Ok(Statement::ForEach {
+                var,
+                iterable,
+                body,
+                line: tok.line,
+            });
         }
 
         if *self.kind() == TokenKind::From {
@@ -431,13 +653,35 @@ impl Parser {
             let step = if *self.kind() == TokenKind::Step {
                 self.advance();
                 Some(self.parse_expression()?)
-            } else { None };
+            } else {
+                None
+            };
             self.expect(TokenKind::RParen)?;
             let body = self.parse_block()?;
-            return Ok(Statement::RangeFor { var, start, end, step, body, line: tok.line });
+            return Ok(Statement::RangeFor {
+                var,
+                start,
+                end,
+                step,
+                body,
+                line: tok.line,
+            });
         }
 
         Err(format!("متوقع 'في' أو 'من' في السطر {}", tok.line))
+    }
+
+    fn parse_while(&mut self) -> Result<Statement, String> {
+        let tok = self.advance();
+        self.expect(TokenKind::LParen)?;
+        let condition = self.parse_expression()?;
+        self.expect(TokenKind::RParen)?;
+        let body = self.parse_block()?;
+        Ok(Statement::While {
+            condition,
+            body,
+            line: tok.line,
+        })
     }
 
     fn parse_try(&mut self) -> Result<Statement, String> {
@@ -448,13 +692,17 @@ impl Parser {
         let catch_var = self.expect_ident()?;
         self.expect(TokenKind::RParen)?;
         let catch_body = self.parse_block()?;
-        Ok(Statement::TryCatch { try_body, catch_var, catch_body, line: tok.line })
+        Ok(Statement::TryCatch {
+            try_body,
+            catch_var,
+            catch_body,
+            line: tok.line,
+        })
     }
 
     fn parse_html(&mut self, tag: &str) -> Result<Statement, String> {
         let tok = self.advance();
         self.expect(TokenKind::LParen)?;
-
         let mut args = Vec::new();
         if *self.kind() != TokenKind::RParen {
             args.push(self.parse_expression()?);
@@ -466,35 +714,59 @@ impl Parser {
         self.expect(TokenKind::RParen)?;
 
         let (content, attrs): (Option<Expression>, Vec<(String, Expression)>) = match tag {
-            "img" => {
-                let a = args.into_iter().next().ok_or_else(|| "صورة تحتاج رابطًا".to_string())?;
+            "img" | "video" | "audio" | "iframe" | "source" | "track" => {
+                let a = args
+                    .into_iter()
+                    .next()
+                    .ok_or_else(|| format!("{} تحتاج رابطًا", tag))?;
                 (None, vec![("src".into(), a)])
             }
-            "video" | "audio" => {
-                let a = args.into_iter().next().ok_or_else(|| "وسائط تحتاج رابطًا".to_string())?;
-                (None, vec![("src".into(), a)])
-            }
-            "input" => {
+            "input" | "textarea" => {
                 let mut it = args.into_iter();
-                let placeholder = it.next().ok_or_else(|| "مدخل يحتاج نصًا".to_string())?;
+                let placeholder = it
+                    .next()
+                    .ok_or_else(|| format!("{} يحتاج نصًا", tag))?;
                 let mut attrs = vec![("placeholder".into(), placeholder)];
-                if let Some(id_expr) = it.next() { attrs.push(("id".into(), id_expr)); }
-                if let Some(class_expr) = it.next() { attrs.push(("class".into(), class_expr)); }
+                if let Some(id_expr) = it.next() {
+                    attrs.push(("id".into(), id_expr));
+                }
+                if let Some(class_expr) = it.next() {
+                    attrs.push(("class".into(), class_expr));
+                }
                 (None, attrs)
             }
             "a" => {
                 let mut it = args.into_iter();
-                let text = it.next().ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
-                let url = it.next().ok_or_else(|| "رابط يحتاج URL".to_string())?;
+                let text = it
+                    .next()
+                    .ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
+                let url = it
+                    .next()
+                    .ok_or_else(|| "رابط يحتاج URL".to_string())?;
                 (Some(text), vec![("href".into(), url)])
             }
-            "br" | "hr" => (None, vec![]),
+            "progress" | "meter" => {
+                let mut it = args.into_iter();
+                let value = it
+                    .next()
+                    .ok_or_else(|| format!("{} يحتاج قيمة", tag))?;
+                let mut attrs = vec![("value".into(), value)];
+                if let Some(max_expr) = it.next() {
+                    attrs.push(("max".into(), max_expr));
+                }
+                (None, attrs)
+            }
+            "br" | "hr" | "wbr" | "col" | "area" => (None, vec![]),
             _ => {
                 let mut it = args.into_iter();
                 let c = it.next();
                 let mut attrs = vec![];
-                if let Some(id_expr) = it.next() { attrs.push(("id".into(), id_expr)); }
-                if let Some(class_expr) = it.next() { attrs.push(("class".into(), class_expr)); }
+                if let Some(id_expr) = it.next() {
+                    attrs.push(("id".into(), id_expr));
+                }
+                if let Some(class_expr) = it.next() {
+                    attrs.push(("class".into(), class_expr));
+                }
                 (c, attrs)
             }
         };
@@ -504,19 +776,36 @@ impl Parser {
             let kind = match self.kind() {
                 TokenKind::OnClick => "click",
                 TokenKind::OnChange => "change",
+                TokenKind::OnSubmit => "submit",
+                TokenKind::OnInput => "input",
+                TokenKind::OnKeyDown => "keydown",
+                TokenKind::OnKeyUp => "keyup",
+                TokenKind::OnLoad => "load",
+                TokenKind::OnMouseOver => "mouseover",
+                TokenKind::OnFocus => "focus",
                 _ => break,
             };
             self.advance();
             let body = self.parse_block()?;
-            events.push(Event { kind: kind.to_string(), body });
+            events.push(Event {
+                kind: kind.into(),
+                body,
+            });
         }
 
         Ok(Statement::HtmlElement {
-            tag: tag.to_string(), content, attrs,
-            children: None, events, line: tok.line,
+            tag: tag.into(),
+            content,
+            attrs,
+            children: None,
+            events,
+            line: tok.line,
         })
     }
 
+    // ==========================================
+    // التعبيرات
+    // ==========================================
     fn parse_expression(&mut self) -> Result<Expression, String> {
         self.parse_or()
     }
@@ -526,7 +815,11 @@ impl Parser {
         while *self.kind() == TokenKind::Or {
             self.advance();
             let right = self.parse_and()?;
-            left = Expression::Logical { left: Box::new(left), op: LogOp::Or, right: Box::new(right) };
+            left = Expression::Logical {
+                left: Box::new(left),
+                op: LogOp::Or,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -536,7 +829,11 @@ impl Parser {
         while *self.kind() == TokenKind::And {
             self.advance();
             let right = self.parse_comparison()?;
-            left = Expression::Logical { left: Box::new(left), op: LogOp::And, right: Box::new(right) };
+            left = Expression::Logical {
+                left: Box::new(left),
+                op: LogOp::And,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -548,11 +845,17 @@ impl Parser {
             TokenKind::NotEq => CmpOp::Ne,
             TokenKind::Greater => CmpOp::Gt,
             TokenKind::Less => CmpOp::Lt,
+            TokenKind::Ge => CmpOp::Ge,
+            TokenKind::Le => CmpOp::Le,
             _ => return Ok(left),
         };
         self.advance();
         let right = self.parse_additive()?;
-        Ok(Expression::Comparison { left: Box::new(left), op, right: Box::new(right) })
+        Ok(Expression::Comparison {
+            left: Box::new(left),
+            op,
+            right: Box::new(right),
+        })
     }
 
     fn parse_additive(&mut self) -> Result<Expression, String> {
@@ -565,7 +868,11 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_multiplicative()?;
-            left = Expression::Binary { left: Box::new(left), op, right: Box::new(right) };
+            left = Expression::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
@@ -581,25 +888,52 @@ impl Parser {
             };
             self.advance();
             let right = self.parse_unary()?;
-            left = Expression::Binary { left: Box::new(left), op, right: Box::new(right) };
+            left = Expression::Binary {
+                left: Box::new(left),
+                op,
+                right: Box::new(right),
+            };
         }
         Ok(left)
     }
 
     fn parse_unary(&mut self) -> Result<Expression, String> {
-        if *self.kind() == TokenKind::Not {
-            self.advance();
-            let e = self.parse_unary()?;
-            Ok(Expression::Not(Box::new(e)))
-        } else { self.parse_primary() }
+        match self.kind() {
+            TokenKind::Not => {
+                self.advance();
+                Ok(Expression::Not(Box::new(self.parse_unary()?)))
+            }
+            TokenKind::Minus => {
+                self.advance();
+                Ok(Expression::Neg(Box::new(self.parse_unary()?)))
+            }
+            _ => self.parse_primary(),
+        }
     }
 
     fn parse_primary(&mut self) -> Result<Expression, String> {
         let mut expr = self.parse_atom()?;
-        while *self.kind() == TokenKind::Dot {
-            self.advance();
-            let prop = self.expect_ident()?;
-            expr = Expression::MemberAccess { object: Box::new(expr), property: prop };
+        loop {
+            match self.kind() {
+                TokenKind::Dot => {
+                    self.advance();
+                    let prop = self.expect_ident()?;
+                    expr = Expression::MemberAccess {
+                        object: Box::new(expr),
+                        property: prop,
+                    };
+                }
+                TokenKind::LBracket => {
+                    self.advance();
+                    let idx = self.parse_expression()?;
+                    self.expect(TokenKind::RBracket)?;
+                    expr = Expression::Index {
+                        object: Box::new(expr),
+                        index: Box::new(idx),
+                    };
+                }
+                _ => break,
+            }
         }
         Ok(expr)
     }
@@ -615,17 +949,11 @@ impl Parser {
             TokenKind::Identifier(name) => {
                 if *self.kind() == TokenKind::LParen {
                     self.advance();
-                    let mut args = Vec::new();
-                    if *self.kind() != TokenKind::RParen {
-                        args.push(self.parse_expression()?);
-                        while *self.kind() == TokenKind::Comma {
-                            self.advance();
-                            args.push(self.parse_expression()?);
-                        }
-                    }
-                    self.expect(TokenKind::RParen)?;
+                    let args = self.parse_args()?;
                     Ok(Expression::Call { name, args })
-                } else { Ok(Expression::Identifier(name)) }
+                } else {
+                    Ok(Expression::Identifier(name))
+                }
             }
             TokenKind::LParen => {
                 let e = self.parse_expression()?;
@@ -651,19 +979,30 @@ impl Parser {
                         let key = match self.advance().kind {
                             TokenKind::Identifier(s) => s,
                             TokenKind::String(s) => s,
-                            other => return Err(format!("متوقع اسم خاصية، وجد {:?}", other)),
+                            other => {
+                                return Err(format!(
+                                    "متوقع اسم خاصية، وجد {:?}",
+                                    other
+                                ))
+                            }
                         };
                         self.expect(TokenKind::Colon)?;
                         let value = self.parse_expression()?;
                         pairs.push((key, value));
-                        if *self.kind() == TokenKind::Comma { self.advance(); }
-                        else { break; }
+                        if *self.kind() == TokenKind::Comma {
+                            self.advance();
+                        } else {
+                            break;
+                        }
                     }
                 }
                 self.expect(TokenKind::RBrace)?;
                 Ok(Expression::Dict(pairs))
             }
-            other => Err(format!("تعبير غير متوقع {:?} في السطر {}", other, tok.line)),
+            other => Err(format!(
+                "تعبير غير متوقع {:?} في السطر {}",
+                other, tok.line
+            )),
         }
     }
 }

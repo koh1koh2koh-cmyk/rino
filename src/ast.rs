@@ -1,11 +1,11 @@
 #![allow(dead_code)]
-//! شجرة الكود المجردة (AST) للغة Rino.
 
 #[derive(Debug, Clone)]
 pub struct Program {
     pub page_title: Option<Expression>,
     pub styles: Vec<StyleRule>,
     pub state: Vec<Statement>,
+    pub derived: Vec<Statement>,       // ← جديد: كتلة مشتق
     pub functions: Vec<Statement>,
     pub components: Vec<Statement>,
     pub tests: Vec<Statement>,
@@ -23,9 +23,7 @@ pub struct StyleRule {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SelectorKind {
-    Tag,
-    Class,
-    Id,
+    Tag, Class, Id,
 }
 
 #[derive(Debug, Clone)]
@@ -40,6 +38,9 @@ pub enum Statement {
     If { condition: Expression, then_branch: Vec<Statement>, else_branch: Vec<Statement>, line: usize },
     ForEach { var: String, iterable: Expression, body: Vec<Statement>, line: usize },
     RangeFor { var: String, start: Expression, end: Expression, step: Option<Expression>, body: Vec<Statement>, line: usize },
+    While { condition: Expression, body: Vec<Statement>, line: usize },
+    Break { line: usize },
+    Continue { line: usize },
     TryCatch { try_body: Vec<Statement>, catch_var: String, catch_body: Vec<Statement>, line: usize },
     HtmlElement {
         tag: String,
@@ -68,11 +69,13 @@ pub enum Expression {
     List(Vec<Expression>),
     Dict(Vec<(String, Expression)>),
     MemberAccess { object: Box<Expression>, property: String },
+    Index { object: Box<Expression>, index: Box<Expression> },
     Call { name: String, args: Vec<Expression> },
     Binary { left: Box<Expression>, op: BinOp, right: Box<Expression> },
     Comparison { left: Box<Expression>, op: CmpOp, right: Box<Expression> },
     Logical { left: Box<Expression>, op: LogOp, right: Box<Expression> },
     Not(Box<Expression>),
+    Neg(Box<Expression>),
 }
 
 #[derive(Debug, Clone)]
