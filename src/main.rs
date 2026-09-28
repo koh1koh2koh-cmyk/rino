@@ -1,11 +1,12 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 5.0 — محرك إشارات (Signals)
+//! الإصدار 6.0 — نظام الأنواع + محرك الإشارات
 
 mod ast;
 mod correction;
 mod lexer;
 mod parser;
 mod token;
+mod typecheck;
 
 mod formatter {
     pub struct Formatter { indent: usize, indent_size: usize }
@@ -66,10 +67,6 @@ use parser::Parser;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
-
-// ============================================
-// ثوابت JS
-// ============================================
 
 const SIGNALS_JS: &str = r##"
 let _currentSub = null;
@@ -432,8 +429,7 @@ impl Value {
         match self {
             Value::Bool(b) => *b, Value::Num(n) => *n != 0.0,
             Value::Str(s) => !s.is_empty(), Value::Null => false,
-            Value::List(v) => !v.is_empty(),
-            Value::Dict(p) => !p.is_empty(),
+            Value::List(v) => !v.is_empty(), Value::Dict(p) => !p.is_empty(),
         }
     }
     fn to_js_literal(&self) -> String {
@@ -1022,89 +1018,6 @@ impl<'a> Interp<'a> {
             _ => Err(format!("دالة غير معروفة: {}", name)),
         }
     }
-}
-
-// ============================================
-// تشغيل الاختبارات
-// ============================================
-
-fn run_tests(program: &Program) -> i32 {
-    if program.tests.is_empty() {
-        println!("لا توجد اختبارات في هذا الملف");
-        return 0;
-    }
-    let mut funcs: FuncMap = HashMap::new();
-    for f in &program.functions {
-        if let Statement::Function { name, params, body, .. } = f {
-            funcs.insert(name.clone(), (params.clone(), body.clone()));
-        }
-    }
-    println!("\nتشغيل {} اختبار...", program.tests.len());
-    println!("-------------------------------------");
-    let mut passed = 0;
-    let mut failed = 0;
-    for test in &program.tests {
-        if let Statement::Test { name, body, .. } = test {
-            let mut env: HashMap<String, Value> = HashMap::new();
-            let mut errors: Vec<String> = Vec::new();
-            let mut assertion_num = 0;
-            for stmt in body {
-                match stmt {
-                    Statement::Call { name: cname, args, .. } if cname == "توقع" => {
-                        assertion_num += 1;
-                        if let Some(arg) = args.first() {
-                            let mut interp = Interp::new(&funcs);
-                            match interp.eval(arg, &env) {
-                                Ok(v) => if !v.as_bool() {
-                                    errors.push(format!("توقع #{} فشل: القيمة = {}",
-                                        assertion_num, v.to_display()));
-                                },
-                                Err(e) => errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e)),
-                            }
-                        }
-                    }
-                    Statement::Call { name: cname, args, .. } if cname == "توقع_يساوي" => {
-                        assertion_num += 1;
-                        if args.len() >= 2 {
-                            let mut interp = Interp::new(&funcs);
-                            let a = interp.eval(&args[0], &env);
-                            let b = interp.eval(&args[1], &env);
-                            match (a, b) {
-                                (Ok(va), Ok(vb)) => {
-                                    let da = va.to_display();
-                                    let db = vb.to_display();
-                                    if da != db {
-                                        errors.push(format!(
-                                            "توقع #{}: متوقع [{}] لكن وجد [{}]",
-                                            assertion_num, db, da));
-                                    }
-                                }
-                                (Err(e), _) | (_, Err(e)) =>
-                                    errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e)),
-                            }
-                        }
-                    }
-                    _ => {
-                        let mut interp = Interp::new(&funcs);
-                        if let Err(e) = interp.exec(stmt, &mut env) {
-                            errors.push(format!("خطأ في التنفيذ: {}", e));
-                        }
-                    }
-                }
-            }
-            if errors.is_empty() {
-                println!("PASS: {}", name);
-                passed += 1;
-            } else {
-                println!("FAIL: {}", name);
-                for e in &errors { println!("   - {}", e); }
-                failed += 1;
-            }
-        }
-    }
-    println!("-------------------------------------");
-    println!("النتيجة: {} نجح | {} فشل | {} الإجمالي", passed, failed, passed + failed);
-    if failed > 0 { 1 } else { 0 }
 }
 
 // ============================================
@@ -1841,7 +1754,6 @@ impl Codegen {
                     attr_str.push_str(" controls");
                 }
 
-                // ربط ثنائي الاتجاه
                 if matches!(tag.as_str(), "input" | "textarea") {
                     if let Some(ref id_val) = existing_id {
                         if self.state_vars.contains(id_val) {
@@ -1935,7 +1847,6 @@ impl Codegen {
                 if cond_reactive && body_safe {
                     let id = self.next_id();
 
-                    // المحتوى الابتدائي
                     let initial_true = interp.eval(condition, env)?.as_bool();
                     let initial_branch = if initial_true { then_branch } else { else_branch };
                     let mut initial_html = String::new();
@@ -1943,7 +1854,6 @@ impl Codegen {
                         initial_html.push_str(&self.gen_html(st, env, interp)?);
                     }
 
-                    // رندر JS
                     let mut then_render = String::new();
                     for st in then_branch {
                         then_render.push_str(&self.stmt_to_html_js(
@@ -1993,7 +1903,6 @@ impl Codegen {
                 if iter_reactive && body_safe {
                     let id = self.next_id();
 
-                    // محتوى ابتدائي
                     let iterable_val = interp.eval(iterable, env)?;
                     let initial_items: Vec<Value> = match iterable_val {
                         Value::List(l) => l,
@@ -2011,7 +1920,6 @@ impl Codegen {
                     }
                     *env = cached_env;
 
-                    // رندر JS
                     let mut locals: HashSet<String> = HashSet::new();
                     locals.insert(var.clone());
                     let mut render = String::new();
@@ -2225,6 +2133,7 @@ fn review_code(source: &str, input_path: &str) -> i32 {
                 if program.page_title.is_none() {
                     warnings.push((0, "لم يتم تحديد عنوان الصفحة".to_string()));
                 }
+                info.push(format!("الأنواع: {}", program.type_aliases.len()));
                 info.push(format!("قواعد النمط: {}", program.styles.len()));
                 info.push(format!("متغيرات الحالة: {}", program.state.len()));
                 info.push(format!("المشتقات: {}", program.derived.len()));
@@ -2261,6 +2170,89 @@ fn review_code(source: &str, input_path: &str) -> i32 {
 }
 
 // ============================================
+// تشغيل الاختبارات
+// ============================================
+
+fn run_tests(program: &Program) -> i32 {
+    if program.tests.is_empty() {
+        println!("لا توجد اختبارات في هذا الملف");
+        return 0;
+    }
+    let mut funcs: FuncMap = HashMap::new();
+    for f in &program.functions {
+        if let Statement::Function { name, params, body, .. } = f {
+            funcs.insert(name.clone(), (params.clone(), body.clone()));
+        }
+    }
+    println!("\nتشغيل {} اختبار...", program.tests.len());
+    println!("-------------------------------------");
+    let mut passed = 0;
+    let mut failed = 0;
+    for test in &program.tests {
+        if let Statement::Test { name, body, .. } = test {
+            let mut env: HashMap<String, Value> = HashMap::new();
+            let mut errors: Vec<String> = Vec::new();
+            let mut assertion_num = 0;
+            for stmt in body {
+                match stmt {
+                    Statement::Call { name: cname, args, .. } if cname == "توقع" => {
+                        assertion_num += 1;
+                        if let Some(arg) = args.first() {
+                            let mut interp = Interp::new(&funcs);
+                            match interp.eval(arg, &env) {
+                                Ok(v) => if !v.as_bool() {
+                                    errors.push(format!("توقع #{} فشل: القيمة = {}",
+                                        assertion_num, v.to_display()));
+                                },
+                                Err(e) => errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e)),
+                            }
+                        }
+                    }
+                    Statement::Call { name: cname, args, .. } if cname == "توقع_يساوي" => {
+                        assertion_num += 1;
+                        if args.len() >= 2 {
+                            let mut interp = Interp::new(&funcs);
+                            let a = interp.eval(&args[0], &env);
+                            let b = interp.eval(&args[1], &env);
+                            match (a, b) {
+                                (Ok(va), Ok(vb)) => {
+                                    let da = va.to_display();
+                                    let db = vb.to_display();
+                                    if da != db {
+                                        errors.push(format!(
+                                            "توقع #{}: متوقع [{}] لكن وجد [{}]",
+                                            assertion_num, db, da));
+                                    }
+                                }
+                                (Err(e), _) | (_, Err(e)) =>
+                                    errors.push(format!("توقع #{}: خطأ — {}", assertion_num, e)),
+                            }
+                        }
+                    }
+                    _ => {
+                        let mut interp = Interp::new(&funcs);
+                        if let Err(e) = interp.exec(stmt, &mut env) {
+                            errors.push(format!("خطأ في التنفيذ: {}", e));
+                        }
+                    }
+                }
+            }
+            if errors.is_empty() {
+                println!("PASS: {}", name);
+                passed += 1;
+            } else {
+                println!("FAIL: {}", name);
+                for e in &errors { println!("   - {}", e); }
+                failed += 1;
+            }
+        }
+    }
+    println!("-------------------------------------");
+    println!("النتيجة: {} نجح | {} فشل | {} الإجمالي", passed, failed, passed + failed);
+    if failed > 0 { 1 } else { 0 }
+}
+
+// ============================================
 // main
 // ============================================
 
@@ -2293,6 +2285,40 @@ fn main() {
         return;
     }
 
+    if args.len() > 2 && args[1] == "check" {
+        let file = &args[2];
+        let source = match fs::read_to_string(file) {
+            Ok(s) => s,
+            Err(e) => { eprintln!("فشل قراءة الملف: {}", e); std::process::exit(1); }
+        };
+        let mut lexer = Lexer::new(&source);
+        let tokens = match lexer.tokenize() {
+            Ok(t) => t,
+            Err(e) => { eprintln!("خطأ لغوي: {}", e); std::process::exit(1); }
+        };
+        let mut parser = Parser::new(tokens);
+        let program = match parser.parse() {
+            Ok(p) => p,
+            Err(e) => { eprintln!("خطأ نحوي: {}", e); std::process::exit(1); }
+        };
+        let mut checker = typecheck::TypeChecker::new();
+        let errors = checker.check_program(&program);
+        if errors.is_empty() {
+            println!("✓ لا توجد أخطاء في الأنواع");
+            std::process::exit(0);
+        } else {
+            eprintln!("\n❌ {} خطأ في الأنواع:", errors.len());
+            for err in &errors {
+                if err.line > 0 {
+                    eprintln!("   [سطر {}] {}", err.line, err.message);
+                } else {
+                    eprintln!("   {}", err.message);
+                }
+            }
+            std::process::exit(1);
+        }
+    }
+
     if args.len() > 1 && args[1] == "test" {
         let test_file = if args.len() > 2 { &args[2] } else { "index.rino" };
         let test_path = PathBuf::from(test_file);
@@ -2316,6 +2342,20 @@ fn main() {
         let mut pr = Parser::new(tk);
         let prog = pr.parse().expect("خطأ نحوي");
 
+        let mut checker = typecheck::TypeChecker::new();
+        let type_errors = checker.check_program(&prog);
+        if !type_errors.is_empty() {
+            eprintln!("\n❌ أخطاء الأنواع ({}):", type_errors.len());
+            for err in &type_errors {
+                if err.line > 0 {
+                    eprintln!("   [سطر {}] {}", err.line, err.message);
+                } else {
+                    eprintln!("   {}", err.message);
+                }
+            }
+            std::process::exit(1);
+        }
+
         let exit_code = run_tests(&prog);
         std::process::exit(exit_code);
     }
@@ -2332,6 +2372,7 @@ fn main() {
         eprintln!("   rino format <ملف.rino>  — تنسيق الملف");
         eprintln!("   rino test <ملف.rino>    — تشغيل الاختبارات");
         eprintln!("   rino review <ملف.rino>  — مراجعة الكود");
+        eprintln!("   rino check <ملف.rino>   — فحص الأنواع");
         std::process::exit(1);
     }
 
@@ -2379,7 +2420,21 @@ fn main() {
         Err(e) => { eprintln!("خطأ نحوي: {}", e); std::process::exit(1); }
     };
 
-    // خريطة الدوال
+    let mut checker = typecheck::TypeChecker::new();
+    let type_errors = checker.check_program(&program);
+    if !type_errors.is_empty() {
+        eprintln!("\n❌ أخطاء الأنواع ({}):", type_errors.len());
+        for err in &type_errors {
+            if err.line > 0 {
+                eprintln!("   [سطر {}] {}", err.line, err.message);
+            } else {
+                eprintln!("   {}", err.message);
+            }
+        }
+        eprintln!();
+        std::process::exit(1);
+    }
+
     let mut funcs: FuncMap = HashMap::new();
     for f in &program.functions {
         if let Statement::Function { name, params, body, .. } = f {
@@ -2387,7 +2442,6 @@ fn main() {
         }
     }
 
-    // متغيرات الحالة والمشتقات
     let mut state_vars: HashSet<String> = HashSet::new();
     for s in &program.state {
         if let Statement::Let { name, .. } = s { state_vars.insert(name.clone()); }
@@ -2397,11 +2451,17 @@ fn main() {
         if let Statement::Let { name, .. } = s { derived_vars.insert(name.clone()); }
     }
 
-    // بيئة التوليد
+    // ══════════════════════════════════════════════
+    // بيئة التوليد — يشمل الحالة والمشتقات
+    // ══════════════════════════════════════════════
     let mut env: HashMap<String, Value> = HashMap::new();
     {
         let mut interp = Interp::new(&funcs);
+        // 1. متغيرات الحالة أولاً
         for s in &program.state { let _ = interp.exec(s, &mut env); }
+        // 2. المشتقات (تعتمد على الحالة)
+        for s in &program.derived { let _ = interp.exec(s, &mut env); }
+        // 3. المتغيرات المحلية في الجسم
         for s in &program.body {
             if matches!(s,
                 Statement::Let { .. } |
@@ -2412,7 +2472,6 @@ fn main() {
         }
     }
 
-    // توليد دوال JS
     let mut cg = Codegen::new(state_vars.clone(), derived_vars.clone());
     for c in &program.components {
         if let Statement::ComponentDef { name, params, body, .. } = c {
@@ -2434,7 +2493,6 @@ fn main() {
         }
     }
 
-    // توليد body_html (بعد بناء cg مكتملاً)
     let mut body_html = String::new();
     {
         let mut interp = Interp::new(&funcs);
@@ -2449,7 +2507,6 @@ fn main() {
         }
     }
 
-    // CSS
     let mut css = String::from(BUILTIN_CSS);
     css.push('\n');
     for r in &program.styles {
@@ -2484,7 +2541,6 @@ fn main() {
         }
     }
 
-    // توليد الإشارات الأولية
     let mut state_init = String::new();
     for s in &program.state {
         if let Statement::Let { name, value, .. } = s {
@@ -2498,7 +2554,6 @@ fn main() {
         }
     }
 
-    // توليد المشتقات (memos)
     let mut derived_js = String::new();
     for s in &program.derived {
         if let Statement::Let { name, value, .. } = s {
@@ -2520,7 +2575,6 @@ fn main() {
         None => "Rino Page".into(),
     };
 
-    // بناء السكربت النهائي
     let mut script = String::new();
     script.push_str(SIGNALS_JS);
     script.push('\n');
@@ -2534,7 +2588,6 @@ fn main() {
     script.push('\n');
     script.push_str(&cg.effects_js);
 
-    // HTML
     let mut html = String::new();
     html.push_str("<!DOCTYPE html>\n");
     html.push_str("<html lang=\"ar\" dir=\"rtl\">\n");

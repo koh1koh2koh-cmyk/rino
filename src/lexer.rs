@@ -42,9 +42,7 @@ impl Lexer {
     fn skip_whitespace_and_comments(&mut self) {
         loop {
             match self.peek() {
-                Some(c) if c.is_whitespace() || is_diacritic(c) => {
-                    self.advance();
-                }
+                Some(c) if c.is_whitespace() || is_diacritic(c) => { self.advance(); }
                 Some('/') if self.peek_next() == Some('/') => {
                     while let Some(c) = self.peek() {
                         if c == '\n' { break; }
@@ -69,22 +67,14 @@ impl Lexer {
                         'r' => s.push('\r'),
                         '"' => s.push('"'),
                         '\\' => s.push('\\'),
-                        other => {
-                            s.push('\\');
-                            s.push(other);
-                        }
+                        other => { s.push('\\'); s.push(other); }
                     }
                     self.advance();
                 }
                 continue;
             }
-            if c == '"' {
-                self.advance();
-                return Ok(s);
-            }
-            if c == '\n' {
-                return Err(format!("نص غير مغلق في السطر {}", self.line));
-            }
+            if c == '"' { self.advance(); return Ok(s); }
+            if c == '\n' { return Err(format!("نص غير مغلق في السطر {}", self.line)); }
             s.push(c);
             self.advance();
         }
@@ -109,8 +99,7 @@ impl Lexer {
                 break;
             }
         }
-        s.parse()
-            .map_err(|_| format!("عدد غير صالح '{}' في السطر {}", s, self.line))
+        s.parse().map_err(|_| format!("عدد غير صالح '{}' في السطر {}", s, self.line))
     }
 
     fn read_identifier(&mut self) -> String {
@@ -137,11 +126,7 @@ impl Lexer {
             let c = match self.peek() {
                 Some(c) => c,
                 None => {
-                    tokens.push(Token {
-                        kind: TokenKind::EOF,
-                        line,
-                        column,
-                    });
+                    tokens.push(Token { kind: TokenKind::EOF, line, column });
                     break;
                 }
             };
@@ -167,7 +152,14 @@ impl Lexer {
                 continue;
             }
 
-            // رموز بسيطة
+            // ؟ (علامة النوع الاختياري)
+            if c == '؟' {
+                self.advance();
+                tokens.push(Token { kind: TokenKind::Question, line, column });
+                continue;
+            }
+
+            // الرموز البسيطة
             let simple = match c {
                 '(' => Some(TokenKind::LParen),
                 ')' => Some(TokenKind::RParen),
@@ -189,12 +181,19 @@ impl Lexer {
 
             if let Some(kind) = simple {
                 self.advance();
-                // دعم >= و <=
+                // ->
+                if kind == TokenKind::Minus && self.peek() == Some('>') {
+                    self.advance();
+                    tokens.push(Token { kind: TokenKind::Arrow, line, column });
+                    continue;
+                }
+                // >=
                 if kind == TokenKind::Greater && self.peek() == Some('=') {
                     self.advance();
                     tokens.push(Token { kind: TokenKind::Ge, line, column });
                     continue;
                 }
+                // <=
                 if kind == TokenKind::Less && self.peek() == Some('=') {
                     self.advance();
                     tokens.push(Token { kind: TokenKind::Le, line, column });
@@ -246,14 +245,14 @@ impl Lexer {
             if is_ident_start(c) {
                 let word = self.read_identifier();
 
-                // 1) هل هي كلمة مفتاحية صحيحة؟
+                // 1) كلمة مفتاحية صحيحة
                 if let Some(kind) = keyword_to_token(&word) {
                     tokens.push(Token { kind, line, column });
                     continue;
                 }
 
-                // 2) محاولة تصحيح إملائي
-                if word.chars().count() >= 3 {
+                // 2) محاولة تصحيح إملائي (فقط للكلمات الطويلة ≥ 4 أحرف)
+                if word.chars().count() >= 4 {
                     if let Some(fixed) = suggest_keyword(&word) {
                         self.corrections.push(format!(
                             "⚠ السطر {}: \"{}\" → \"{}\"",

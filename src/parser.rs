@@ -13,13 +13,8 @@ impl Parser {
         Self { tokens, pos: 0 }
     }
 
-    fn peek(&self) -> &Token {
-        &self.tokens[self.pos]
-    }
-
-    fn kind(&self) -> &TokenKind {
-        &self.tokens[self.pos].kind
-    }
+    fn peek(&self) -> &Token { &self.tokens[self.pos] }
+    fn kind(&self) -> &TokenKind { &self.tokens[self.pos].kind }
 
     fn advance(&mut self) -> Token {
         let t = self.tokens[self.pos].clone();
@@ -57,6 +52,7 @@ impl Parser {
     // ==========================================
     pub fn parse(&mut self) -> Result<Program, String> {
         let mut page_title = None;
+        let mut type_aliases = Vec::new();
         let mut styles = Vec::new();
         let mut state = Vec::new();
         let mut derived = Vec::new();
@@ -69,6 +65,7 @@ impl Parser {
         while *self.kind() != TokenKind::EOF {
             match self.kind().clone() {
                 TokenKind::Page => page_title = Some(self.parse_page()?),
+                TokenKind::TypeKw => type_aliases.push(self.parse_type_alias()?),
                 TokenKind::Style => styles = self.parse_style_block()?,
                 TokenKind::State => {
                     self.advance();
@@ -126,6 +123,7 @@ impl Parser {
 
         Ok(Program {
             page_title,
+            type_aliases,
             styles,
             state,
             derived,
@@ -143,6 +141,85 @@ impl Parser {
         let e = self.parse_expression()?;
         self.expect(TokenKind::RParen)?;
         Ok(e)
+    }
+
+    fn parse_type_alias(&mut self) -> Result<TypeAlias, String> {
+        let tok = self.advance();
+        let name = self.expect_ident()?;
+        self.expect(TokenKind::Assign)?;
+        let definition = self.parse_type()?;
+        Ok(TypeAlias { name, definition, line: tok.line })
+    }
+
+    fn parse_type(&mut self) -> Result<Type, String> {
+        let base = self.parse_type_base()?;
+        if *self.kind() == TokenKind::Question {
+            self.advance();
+            Ok(Type::Optional(Box::new(base)))
+        } else {
+            Ok(base)
+        }
+    }
+
+    fn parse_type_base(&mut self) -> Result<Type, String> {
+        match self.kind().clone() {
+            TokenKind::Null => {
+                self.advance();
+                Ok(Type::Nothing)
+            }
+            // ← جديد: قائمة<T> تأتي ككلمة مفتاحية List
+            TokenKind::List => {
+                self.advance();
+                self.expect(TokenKind::Less)?;
+                let inner = self.parse_type()?;
+                self.expect(TokenKind::Greater)?;
+                Ok(Type::List(Box::new(inner)))
+            }
+            TokenKind::Identifier(name) => {
+                self.advance();
+                match name.as_str() {
+                    "نص" => Ok(Type::Text),
+                    "عدد" => Ok(Type::Number),
+                    "منطقي" => Ok(Type::Boolean),
+                    "أي" => Ok(Type::Any),
+                    // احتياطي في حال جاءت "قائمة" كمعرّف
+                    "قائمة" => {
+                        self.expect(TokenKind::Less)?;
+                        let inner = self.parse_type()?;
+                        self.expect(TokenKind::Greater)?;
+                        Ok(Type::List(Box::new(inner)))
+                    }
+                    _ => Ok(Type::Named(name)),
+                }
+            }
+            TokenKind::LBrace => {
+                self.advance();
+                let mut pairs = Vec::new();
+                while *self.kind() != TokenKind::RBrace && *self.kind() != TokenKind::EOF {
+                    let key = self.expect_ident()?;
+                    self.expect(TokenKind::Colon)?;
+                    let v = self.parse_type()?;
+                    pairs.push((key, v));
+                    if *self.kind() == TokenKind::Comma {
+                        self.advance();
+                    }
+                }
+                self.expect(TokenKind::RBrace)?;
+                Ok(Type::Dict(pairs))
+            }
+            other => Err(format!(
+                "نوع غير متوقع {:?} في السطر {}", other, self.peek().line
+            )),
+        }
+    }
+
+    fn parse_optional_type_ann(&mut self) -> Result<Option<Type>, String> {
+        if *self.kind() == TokenKind::Colon {
+            self.advance();
+            Ok(Some(self.parse_type()?))
+        } else {
+            Ok(None)
+        }
     }
 
     fn parse_test(&mut self) -> Result<Statement, String> {
@@ -163,25 +240,25 @@ impl Parser {
         };
         self.expect(TokenKind::LParen)?;
         let mut params = Vec::new();
+        let mut param_types = Vec::new();
         if *self.kind() != TokenKind::RParen {
             params.push(self.expect_ident()?);
+            param_types.push(self.parse_optional_type_ann()?);
             while *self.kind() == TokenKind::Comma {
                 self.advance();
                 params.push(self.expect_ident()?);
+                param_types.push(self.parse_optional_type_ann()?);
             }
         }
         self.expect(TokenKind::RParen)?;
         let body = self.parse_block()?;
         Ok(Statement::ComponentDef {
-            name,
-            params,
-            body,
-            line: tok.line,
+            name, params, param_types, body, line: tok.line,
         })
     }
 
     // ==========================================
-    // المحددات
+    // المحددات والنمط
     // ==========================================
     fn parse_selector(&mut self) -> Result<(String, SelectorKind), String> {
         match self.kind().clone() {
@@ -298,39 +375,27 @@ impl Parser {
                         self.expect(TokenKind::Colon)?;
                         let val = self.parse_prop_value()?;
                         hover_properties.push((name, val));
-                        if *self.kind() == TokenKind::Comma {
-                            self.advance();
-                        }
+                        if *self.kind() == TokenKind::Comma { self.advance(); }
                     }
                     self.expect(TokenKind::RBrace)?;
-                    if *self.kind() == TokenKind::Comma {
-                        self.advance();
-                    }
+                    if *self.kind() == TokenKind::Comma { self.advance(); }
                     continue;
                 }
                 let name = self.expect_ident()?;
                 self.expect(TokenKind::Colon)?;
                 let val = self.parse_prop_value()?;
                 properties.push((name, val));
-                if *self.kind() == TokenKind::Comma {
-                    self.advance();
-                }
+                if *self.kind() == TokenKind::Comma { self.advance(); }
             }
             self.expect(TokenKind::RBrace)?;
             rules.push(StyleRule {
-                selector,
-                selector_kind,
-                properties,
-                hover_properties,
+                selector, selector_kind, properties, hover_properties,
             });
         }
         self.expect(TokenKind::RBrace)?;
         Ok(rules)
     }
 
-    // ==========================================
-    // الكتل
-    // ==========================================
     fn parse_block(&mut self) -> Result<Vec<Statement>, String> {
         self.expect(TokenKind::LBrace)?;
         let mut stmts = Vec::new();
@@ -350,21 +415,20 @@ impl Parser {
             TokenKind::Let => {
                 self.advance();
                 let name = self.expect_ident()?;
+                let type_ann = self.parse_optional_type_ann()?;
                 self.expect(TokenKind::Assign)?;
                 let value = self.parse_expression()?;
                 Ok(Statement::Let {
-                    name,
-                    value,
-                    is_state: false,
-                    line: tok.line,
+                    name, value, is_state: false, type_ann, line: tok.line,
                 })
             }
             TokenKind::Const => {
                 self.advance();
                 let name = self.expect_ident()?;
+                let type_ann = self.parse_optional_type_ann()?;
                 self.expect(TokenKind::Assign)?;
                 let value = self.parse_expression()?;
-                Ok(Statement::Const { name, value, line: tok.line })
+                Ok(Statement::Const { name, value, type_ann, line: tok.line })
             }
             TokenKind::Function => self.parse_function(),
             TokenKind::Return => {
@@ -389,15 +453,12 @@ impl Parser {
             }
             TokenKind::Try => self.parse_try(),
 
-            // عناوين
             TokenKind::H1 => self.parse_html("h1"),
             TokenKind::H2 => self.parse_html("h2"),
             TokenKind::H3 => self.parse_html("h3"),
             TokenKind::H4 => self.parse_html("h4"),
             TokenKind::H5 => self.parse_html("h5"),
             TokenKind::H6 => self.parse_html("h6"),
-
-            // نصوص
             TokenKind::P => self.parse_html("p"),
             TokenKind::Small => self.parse_html("small"),
             TokenKind::Span => self.parse_html("span"),
@@ -428,7 +489,6 @@ impl Parser {
             TokenKind::Code => self.parse_block_element("code"),
             TokenKind::Pre => self.parse_block_element("pre"),
 
-            // تفاعل
             TokenKind::Button => self.parse_html("button"),
             TokenKind::Image => self.parse_html("img"),
             TokenKind::Link => self.parse_html("a"),
@@ -446,7 +506,6 @@ impl Parser {
             TokenKind::DataList => self.parse_block_element("datalist"),
             TokenKind::OptGroup => self.parse_block_element("optgroup"),
 
-            // تخطيط
             TokenKind::Div => self.parse_block_element("div"),
             TokenKind::Section => self.parse_block_element("section"),
             TokenKind::Header => self.parse_block_element("header"),
@@ -464,12 +523,10 @@ impl Parser {
             TokenKind::NoScript => self.parse_block_element("noscript"),
             TokenKind::Slot => self.parse_html("slot"),
 
-            // قوائم
             TokenKind::List => self.parse_block_element("ul"),
             TokenKind::OrderedList => self.parse_block_element("ol"),
             TokenKind::ListItem => self.parse_html("li"),
 
-            // جداول
             TokenKind::Table => self.parse_block_element("table"),
             TokenKind::Row => self.parse_block_element("tr"),
             TokenKind::Cell => self.parse_html("td"),
@@ -481,7 +538,6 @@ impl Parser {
             TokenKind::ColGroup => self.parse_block_element("colgroup"),
             TokenKind::Col => self.parse_html("col"),
 
-            // وسائط
             TokenKind::Video => self.parse_html("video"),
             TokenKind::Audio => self.parse_html("audio"),
             TokenKind::IFrame => self.parse_html("iframe"),
@@ -494,7 +550,6 @@ impl Parser {
             TokenKind::Area => self.parse_html("area"),
             TokenKind::HR => self.parse_html("hr"),
 
-            // جمل خاصة
             TokenKind::Print => self.parse_call_stmt("اطبع"),
             TokenKind::Expect => self.parse_call_stmt("توقع"),
             TokenKind::ExpectEquals => self.parse_call_stmt("توقع_يساوي"),
@@ -514,19 +569,11 @@ impl Parser {
                 if *self.kind() == TokenKind::Assign {
                     self.advance();
                     let value = self.parse_expression()?;
-                    Ok(Statement::Assignment {
-                        name,
-                        value,
-                        line: tok.line,
-                    })
+                    Ok(Statement::Assignment { name, value, line: tok.line })
                 } else if *self.kind() == TokenKind::LParen {
                     self.advance();
                     let args = self.parse_args()?;
-                    Ok(Statement::Call {
-                        name,
-                        args,
-                        line: tok.line,
-                    })
+                    Ok(Statement::Call { name, args, line: tok.line })
                 } else {
                     Err(format!("جملة غير مفهومة للسطر {}", tok.line))
                 }
@@ -543,11 +590,7 @@ impl Parser {
         let tok = self.advance();
         self.expect(TokenKind::LParen)?;
         let args = self.parse_args()?;
-        Ok(Statement::Call {
-            name: name.into(),
-            args,
-            line: tok.line,
-        })
+        Ok(Statement::Call { name: name.into(), args, line: tok.line })
     }
 
     fn parse_args(&mut self) -> Result<Vec<Expression>, String> {
@@ -586,20 +629,26 @@ impl Parser {
         let name = self.expect_ident()?;
         self.expect(TokenKind::LParen)?;
         let mut params = Vec::new();
+        let mut param_types = Vec::new();
         if *self.kind() != TokenKind::RParen {
             params.push(self.expect_ident()?);
+            param_types.push(self.parse_optional_type_ann()?);
             while *self.kind() == TokenKind::Comma {
                 self.advance();
                 params.push(self.expect_ident()?);
+                param_types.push(self.parse_optional_type_ann()?);
             }
         }
         self.expect(TokenKind::RParen)?;
+        let return_type = if *self.kind() == TokenKind::Arrow {
+            self.advance();
+            Some(self.parse_type()?)
+        } else {
+            None
+        };
         let body = self.parse_block()?;
         Ok(Statement::Function {
-            name,
-            params,
-            body,
-            line: tok.line,
+            name, params, param_types, return_type, body, line: tok.line,
         })
     }
 
@@ -620,10 +669,7 @@ impl Parser {
             Vec::new()
         };
         Ok(Statement::If {
-            condition,
-            then_branch,
-            else_branch,
-            line: tok.line,
+            condition, then_branch, else_branch, line: tok.line,
         })
     }
 
@@ -638,10 +684,7 @@ impl Parser {
             self.expect(TokenKind::RParen)?;
             let body = self.parse_block()?;
             return Ok(Statement::ForEach {
-                var,
-                iterable,
-                body,
-                line: tok.line,
+                var, iterable, body, line: tok.line,
             });
         }
 
@@ -659,12 +702,7 @@ impl Parser {
             self.expect(TokenKind::RParen)?;
             let body = self.parse_block()?;
             return Ok(Statement::RangeFor {
-                var,
-                start,
-                end,
-                step,
-                body,
-                line: tok.line,
+                var, start, end, step, body, line: tok.line,
             });
         }
 
@@ -677,11 +715,7 @@ impl Parser {
         let condition = self.parse_expression()?;
         self.expect(TokenKind::RParen)?;
         let body = self.parse_block()?;
-        Ok(Statement::While {
-            condition,
-            body,
-            line: tok.line,
-        })
+        Ok(Statement::While { condition, body, line: tok.line })
     }
 
     fn parse_try(&mut self) -> Result<Statement, String> {
@@ -693,10 +727,7 @@ impl Parser {
         self.expect(TokenKind::RParen)?;
         let catch_body = self.parse_block()?;
         Ok(Statement::TryCatch {
-            try_body,
-            catch_var,
-            catch_body,
-            line: tok.line,
+            try_body, catch_var, catch_body, line: tok.line,
         })
     }
 
@@ -715,16 +746,13 @@ impl Parser {
 
         let (content, attrs): (Option<Expression>, Vec<(String, Expression)>) = match tag {
             "img" | "video" | "audio" | "iframe" | "source" | "track" => {
-                let a = args
-                    .into_iter()
-                    .next()
+                let a = args.into_iter().next()
                     .ok_or_else(|| format!("{} تحتاج رابطًا", tag))?;
                 (None, vec![("src".into(), a)])
             }
             "input" | "textarea" => {
                 let mut it = args.into_iter();
-                let placeholder = it
-                    .next()
+                let placeholder = it.next()
                     .ok_or_else(|| format!("{} يحتاج نصًا", tag))?;
                 let mut attrs = vec![("placeholder".into(), placeholder)];
                 if let Some(id_expr) = it.next() {
@@ -737,18 +765,13 @@ impl Parser {
             }
             "a" => {
                 let mut it = args.into_iter();
-                let text = it
-                    .next()
-                    .ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
-                let url = it
-                    .next()
-                    .ok_or_else(|| "رابط يحتاج URL".to_string())?;
+                let text = it.next().ok_or_else(|| "رابط يحتاج نصًا".to_string())?;
+                let url = it.next().ok_or_else(|| "رابط يحتاج URL".to_string())?;
                 (Some(text), vec![("href".into(), url)])
             }
             "progress" | "meter" => {
                 let mut it = args.into_iter();
-                let value = it
-                    .next()
+                let value = it.next()
                     .ok_or_else(|| format!("{} يحتاج قيمة", tag))?;
                 let mut attrs = vec![("value".into(), value)];
                 if let Some(max_expr) = it.next() {
@@ -787,10 +810,7 @@ impl Parser {
             };
             self.advance();
             let body = self.parse_block()?;
-            events.push(Event {
-                kind: kind.into(),
-                body,
-            });
+            events.push(Event { kind: kind.into(), body });
         }
 
         Ok(Statement::HtmlElement {
@@ -816,9 +836,7 @@ impl Parser {
             self.advance();
             let right = self.parse_and()?;
             left = Expression::Logical {
-                left: Box::new(left),
-                op: LogOp::Or,
-                right: Box::new(right),
+                left: Box::new(left), op: LogOp::Or, right: Box::new(right),
             };
         }
         Ok(left)
@@ -830,9 +848,7 @@ impl Parser {
             self.advance();
             let right = self.parse_comparison()?;
             left = Expression::Logical {
-                left: Box::new(left),
-                op: LogOp::And,
-                right: Box::new(right),
+                left: Box::new(left), op: LogOp::And, right: Box::new(right),
             };
         }
         Ok(left)
@@ -852,9 +868,7 @@ impl Parser {
         self.advance();
         let right = self.parse_additive()?;
         Ok(Expression::Comparison {
-            left: Box::new(left),
-            op,
-            right: Box::new(right),
+            left: Box::new(left), op, right: Box::new(right),
         })
     }
 
@@ -869,9 +883,7 @@ impl Parser {
             self.advance();
             let right = self.parse_multiplicative()?;
             left = Expression::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+                left: Box::new(left), op, right: Box::new(right),
             };
         }
         Ok(left)
@@ -889,9 +901,7 @@ impl Parser {
             self.advance();
             let right = self.parse_unary()?;
             left = Expression::Binary {
-                left: Box::new(left),
-                op,
-                right: Box::new(right),
+                left: Box::new(left), op, right: Box::new(right),
             };
         }
         Ok(left)
@@ -919,8 +929,7 @@ impl Parser {
                     self.advance();
                     let prop = self.expect_ident()?;
                     expr = Expression::MemberAccess {
-                        object: Box::new(expr),
-                        property: prop,
+                        object: Box::new(expr), property: prop,
                     };
                 }
                 TokenKind::LBracket => {
@@ -928,8 +937,7 @@ impl Parser {
                     let idx = self.parse_expression()?;
                     self.expect(TokenKind::RBracket)?;
                     expr = Expression::Index {
-                        object: Box::new(expr),
-                        index: Box::new(idx),
+                        object: Box::new(expr), index: Box::new(idx),
                     };
                 }
                 _ => break,
@@ -979,12 +987,9 @@ impl Parser {
                         let key = match self.advance().kind {
                             TokenKind::Identifier(s) => s,
                             TokenKind::String(s) => s,
-                            other => {
-                                return Err(format!(
-                                    "متوقع اسم خاصية، وجد {:?}",
-                                    other
-                                ))
-                            }
+                            other => return Err(format!(
+                                "متوقع اسم خاصية، وجد {:?}", other
+                            )),
                         };
                         self.expect(TokenKind::Colon)?;
                         let value = self.parse_expression()?;
@@ -1000,8 +1005,7 @@ impl Parser {
                 Ok(Expression::Dict(pairs))
             }
             other => Err(format!(
-                "تعبير غير متوقع {:?} في السطر {}",
-                other, tok.line
+                "تعبير غير متوقع {:?} في السطر {}", other, tok.line
             )),
         }
     }
