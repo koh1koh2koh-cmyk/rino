@@ -1,5 +1,5 @@
 //! Rino — لغة عربية لبناء الويب.
-//! الإصدار 6.0 — نظام الأنواع + محرك الإشارات
+//! الإصدار 6.1 — نظام الأنواع + محرك الإشارات + rino watch
 
 mod ast;
 mod correction;
@@ -2253,11 +2253,172 @@ fn run_tests(program: &Program) -> i32 {
 }
 
 // ============================================
+// rino watch — مراقبة الملفات وإعادة التوليد التلقائي
+// ============================================
+
+fn watch_get_mtime(path: &Path) -> std::time::SystemTime {
+    fs::metadata(path)
+        .and_then(|m| m.modified())
+        .unwrap_or(std::time::SystemTime::UNIX_EPOCH)
+}
+
+fn watch_collect_files(main_file: &Path) -> Vec<PathBuf> {
+    let mut files = vec![main_file.to_path_buf()];
+    let base_dir = main_file
+        .parent()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_path_buf())
+        .unwrap_or_else(|| PathBuf::from("."));
+
+    if let Ok(content) = fs::read_to_string(main_file) {
+        for line in content.lines() {
+            let trimmed = line.trim();
+            if trimmed.starts_with("استيراد ") {
+                let rest = trimmed["استيراد".len()..].trim();
+                if rest.starts_with('"') && rest.ends_with('"') && rest.len() >= 2 {
+                    let rel = &rest[1..rest.len() - 1];
+                    let p = base_dir.join(rel);
+                    if p.exists() && !files.contains(&p) {
+                        files.push(p);
+                    }
+                }
+            }
+        }
+    }
+    files
+}
+
+fn watch_project(input_path: PathBuf) {
+    use std::thread;
+    use std::time::Duration;
+
+    let exe = match std::env::current_exe() {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("فشل الحصول على مسار التنفيذي: {}", e);
+            std::process::exit(1);
+        }
+    };
+
+    println!();
+    println!("========================================");
+    println!("  Rino Watch - مراقبة الملفات");
+    println!("========================================");
+    println!();
+    println!("الملف الرئيسي: {}", input_path.display());
+
+    let watched = watch_collect_files(&input_path);
+    if watched.len() > 1 {
+        println!();
+        println!("ملفات مراقبة إضافية:");
+        for f in watched.iter().skip(1) {
+            println!("   - {}", f.display());
+        }
+    }
+    println!();
+    println!("   اضغط Ctrl+C للإيقاف");
+    println!("========================================");
+    println!();
+
+    println!("البناء الأولي...");
+    let start = std::time::Instant::now();
+    let status = std::process::Command::new(&exe)
+        .arg(&input_path)
+        .status();
+
+    let elapsed = start.elapsed();
+    match status {
+        Ok(s) if s.success() => {
+            println!("اكتمل البناء الأولي في {:.2}s", elapsed.as_secs_f64());
+            println!();
+            println!("في انتظار التغييرات...");
+        }
+        Ok(s) => {
+            println!("فشل البناء الأولي (exit code: {:?})", s.code());
+            println!();
+            println!("في انتظار التغييرات...");
+        }
+        Err(e) => {
+            println!("خطأ: {}", e);
+            std::process::exit(1);
+        }
+    }
+
+    let mut last_times: Vec<std::time::SystemTime> = watched
+        .iter()
+        .map(|p| watch_get_mtime(p))
+        .collect();
+
+    let mut rebuild_count: u32 = 0;
+
+    loop {
+        thread::sleep(Duration::from_millis(400));
+
+        let mut changed: Option<PathBuf> = None;
+        for (i, p) in watched.iter().enumerate() {
+            let now = watch_get_mtime(p);
+            if now != last_times[i] {
+                last_times[i] = now;
+                if changed.is_none() {
+                    changed = Some(p.clone());
+                }
+            }
+        }
+
+        if let Some(changed_file) = changed {
+            rebuild_count += 1;
+
+            println!();
+            println!("========================================");
+            println!("  إعادة البناء #{}", rebuild_count);
+            println!("========================================");
+            println!();
+            println!("تغيير مكتشف في: {}", changed_file.display());
+            println!();
+
+            let start = std::time::Instant::now();
+            let status = std::process::Command::new(&exe)
+                .arg(&input_path)
+                .status();
+            let elapsed = start.elapsed();
+
+            println!();
+            match status {
+                Ok(s) if s.success() => {
+                    println!("اكتمل البناء في {:.2}s", elapsed.as_secs_f64());
+                    println!("   اضغط Ctrl+R في المتصفح للتحديث");
+                }
+                Ok(s) => {
+                    println!("فشل البناء (exit code: {:?})", s.code());
+                }
+                Err(e) => {
+                    println!("خطأ: {}", e);
+                }
+            }
+            println!();
+            println!("في انتظار التغييرات...");
+        }
+    }
+}
+
+// ============================================
 // main
 // ============================================
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+
+    // ─── أمر المراقبة rino watch ───
+    if args.len() > 1 && args[1] == "watch" {
+        let file = if args.len() > 2 { &args[2] } else { "index.rino" };
+        let path = PathBuf::from(file);
+        if !path.exists() {
+            eprintln!("الملف غير موجود: {}", file);
+            std::process::exit(1);
+        }
+        watch_project(path);
+        return;
+    }
 
     if args.len() > 2 && args[1] == "review" {
         let file = &args[2];
@@ -2304,10 +2465,10 @@ fn main() {
         let mut checker = typecheck::TypeChecker::new();
         let errors = checker.check_program(&program);
         if errors.is_empty() {
-            println!("✓ لا توجد أخطاء في الأنواع");
+            println!("لا توجد أخطاء في الأنواع");
             std::process::exit(0);
         } else {
-            eprintln!("\n❌ {} خطأ في الأنواع:", errors.len());
+            eprintln!("\n{} خطأ في الأنواع:", errors.len());
             for err in &errors {
                 if err.line > 0 {
                     eprintln!("   [سطر {}] {}", err.line, err.message);
@@ -2345,7 +2506,7 @@ fn main() {
         let mut checker = typecheck::TypeChecker::new();
         let type_errors = checker.check_program(&prog);
         if !type_errors.is_empty() {
-            eprintln!("\n❌ أخطاء الأنواع ({}):", type_errors.len());
+            eprintln!("\n{} خطأ في الأنواع:", type_errors.len());
             for err in &type_errors {
                 if err.line > 0 {
                     eprintln!("   [سطر {}] {}", err.line, err.message);
@@ -2369,6 +2530,7 @@ fn main() {
         eprintln!("الملف غير موجود: {}", input_path.display());
         eprintln!("\nالاستخدام:");
         eprintln!("   rino <ملف.rino>         — بناء الملف");
+        eprintln!("   rino watch <ملف.rino>   — مراقبة وإعادة بناء تلقائية");
         eprintln!("   rino format <ملف.rino>  — تنسيق الملف");
         eprintln!("   rino test <ملف.rino>    — تشغيل الاختبارات");
         eprintln!("   rino review <ملف.rino>  — مراجعة الكود");
@@ -2423,7 +2585,7 @@ fn main() {
     let mut checker = typecheck::TypeChecker::new();
     let type_errors = checker.check_program(&program);
     if !type_errors.is_empty() {
-        eprintln!("\n❌ أخطاء الأنواع ({}):", type_errors.len());
+        eprintln!("\n{} خطأ في الأنواع:", type_errors.len());
         for err in &type_errors {
             if err.line > 0 {
                 eprintln!("   [سطر {}] {}", err.line, err.message);
@@ -2451,9 +2613,7 @@ fn main() {
         if let Statement::Let { name, .. } = s { derived_vars.insert(name.clone()); }
     }
 
-    // ══════════════════════════════════════════════
     // بيئة التوليد — يشمل الحالة والمشتقات
-    // ══════════════════════════════════════════════
     let mut env: HashMap<String, Value> = HashMap::new();
     {
         let mut interp = Interp::new(&funcs);
